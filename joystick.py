@@ -20,4 +20,17 @@ def joystick_loop(q: Queue):
         
         q.put(("updown", axis_ud))  
         q.put(("leftright", axis_lr))
+
+        for event in pygame.event.get():
+            if event.type == pygame.JOYBUTTONDOWN:
+                print(f"Button {event.button} pressed")
+
+                if event.button == 1:  # o
+                    q.put(("leftup", 1))
+                elif event.button == 3:  # triangle
+                    q.put(("rightup", 1))
+                elif event.button == 2:  # square
+                    q.put(("leftdown", 1))
+                elif event.button == 0:  # x
+                    q.put(("rightdown", 1))
         time.sleep(0.01)  # 100 Hz update

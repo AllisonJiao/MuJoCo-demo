@@ -14,6 +14,8 @@ def sim_loop(q: Queue):
     # Get actuator id for gripper_updown, gripper_leftright
     gripper_updown_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "up/down")
     gripper_leftright_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "left/right")
+    gripper_leftfinger_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "left_finger")
+    gripper_rightfinger_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "right_finger")
     # abdomen_z_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "abdomen_z")
 
     with mujoco.viewer.launch_passive(m, d) as viewer:
@@ -34,6 +36,18 @@ def sim_loop(q: Queue):
                     axis_ud = val
                 elif target == "leftright":
                     axis_lr = val
+                elif target == "leftup":
+                    d.ctrl[gripper_leftfinger_id] += 0.01
+                    d.ctrl[gripper_leftfinger_id] = min(1.0, d.ctrl[gripper_leftfinger_id])
+                elif target == "rightup":
+                    d.ctrl[gripper_rightfinger_id] += 0.01
+                    d.ctrl[gripper_rightfinger_id] = min(1.0, d.ctrl[gripper_rightfinger_id])
+                elif target == "leftdown":
+                    d.ctrl[gripper_leftfinger_id] -= 0.01
+                    d.ctrl[gripper_leftfinger_id] = max(-0.5, d.ctrl[gripper_leftfinger_id])
+                elif target == "rightdown":
+                    d.ctrl[gripper_rightfinger_id] -= 0.01
+                    d.ctrl[gripper_rightfinger_id] = max(-0.5, d.ctrl[gripper_rightfinger_id])
             
             # Apply deadzone filter
             if abs(axis_ud) < DEADZONE:
