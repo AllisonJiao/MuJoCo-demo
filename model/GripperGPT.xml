@@ -1,0 +1,45 @@
+<mujoco model="simple_gripper_scene">
+    <compiler angle="degree" coordinate="local"/>
+    <option gravity="0 0 -9.81" integrator="RK4"/>
+
+    <worldbody>
+        <!-- Ground -->
+        <geom name="floor" type="plane" pos="0 0 0" size="5 5 0.1" rgba="0.9 0.9 0.9 1"/>
+
+        <!-- Block -->
+        <body name="block" pos="0 0 0.05">
+            <joint type="free" name="block_free"/>
+            <geom type="box" size="0.05 0.05 0.05" rgba="0.2 0.6 0.9 1" mass="0.02" friction = "0.5"/>
+        </body>
+
+        <!-- Gripper -->
+        <body name="gripper" pos="0 0 0.3">
+            <!-- sideways motion -->
+            <joint name="gripper_leftright" type="slide" axis="1 0 0" range="-6 6" stiffness="20" damping="5"/>
+            <!-- vertical motion -->
+            <joint name="gripper_updown" type="slide" axis="0 0 1" range="-1.0 0.0" stiffness="20" damping="5"/>
+
+            <geom type="sphere" size="0.001" mass="0.1" rgba="0 0 0 0"/>
+
+            <!-- Left finger -->
+            <body name="left_finger" pos="-0.06 0 0">
+                <joint name="left_slide" type="slide" axis="1 0 0" limited="true" range="-0.05 0.04" stiffness="1" damping="5"/>
+                <geom type="box" size="0.02 0.04 0.08" rgba="0.9 0.3 0.3 1" mass="0.1" friction = "1.0"/>
+            </body>
+
+            <!-- Right finger -->
+            <body name="right_finger" pos="0.06 0 0">
+                <joint name="right_slide" type="slide" axis="-1 0 0" limited="true" range="-0.05 0.04" stiffness="1" damping="5"/>
+                <geom type="box" size="0.02 0.04 0.08" rgba="0.9 0.3 0.3 1" mass="0.1" friction = "1.0"/>
+            </body>
+        </body>
+    </worldbody>
+
+    <actuator>
+        <motor name = "up/down" joint="gripper_updown" ctrlrange="-15 15" ctrllimited="true"/>
+        <motor name = "left/right" joint="gripper_leftright" ctrlrange="-6 6" ctrllimited="true"/>
+
+        <motor name = "left_finger" joint="left_slide" ctrlrange="-0.5 1" ctrllimited="true"/>
+        <motor name = "right_finger" joint="right_slide" ctrlrange="-0.5 1" ctrllimited="true"/>
+    </actuator>
+</mujoco>

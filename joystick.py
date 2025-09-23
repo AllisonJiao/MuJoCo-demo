@@ -13,7 +13,11 @@ def joystick_loop(q: Queue):
 
     while True:
         pygame.event.pump()
-        # Example: left stick Y-axis
-        axis_val = joystick.get_axis(1)  # [-1, 1]
-        q.put(axis_val)
+        # Left stick
+        axis_ud = joystick.get_axis(1)  # [-1, 1]
+        # Left stick
+        axis_lr = joystick.get_axis(2)  # [-1, 1]
+        
+        q.put(("updown", axis_ud))  
+        q.put(("leftright", axis_lr))
         time.sleep(0.01)  # 100 Hz update

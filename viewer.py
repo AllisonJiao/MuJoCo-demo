@@ -8,31 +8,45 @@ DEADZONE = 0.1
 
 def sim_loop(q: Queue):
     # Load model
-    m = mujoco.MjModel.from_xml_path("model/humanoid.xml")
+    m = mujoco.MjModel.from_xml_path("model/GripperGPT.xml")
     d = mujoco.MjData(m)
 
-    # Get actuator id for abdomen_z
-    abdomen_z_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "abdomen_z")
+    # Get actuator id for gripper_updown, gripper_leftright
+    gripper_updown_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "up/down")
+    gripper_leftright_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "left/right")
+    # abdomen_z_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "abdomen_z")
 
     with mujoco.viewer.launch_passive(m, d) as viewer:
         start = time.time()
+
+        # Initialize control values
+        axis_ud = 0.0
+        axis_lr = 0.0
+
         while viewer.is_running() and time.time() - start < 600:
             step_start = time.time()
 
             # Consume joystick values if available
             while not q.empty():
-                axis_val = q.get_nowait()
+                target, val = q.get_nowait()
 
-                # Apply deadzone filter
-                if abs(axis_val) < DEADZONE:
-                    axis_val = 0.0
+                if target == "updown":
+                    axis_ud = val
+                elif target == "leftright":
+                    axis_lr = val
+            
+            # Apply deadzone filter
+            if abs(axis_ud) < DEADZONE:
+                axis_ud = 0.0
+            
+            if abs(axis_lr) < DEADZONE:
+                axis_lr = 0.0
+            
+            d.ctrl[gripper_updown_id] -= axis_ud * 0.05   # small step per tick
+            d.ctrl[gripper_updown_id] = max(-15.0, min(15.0, d.ctrl[gripper_updown_id]))
 
-                # Incremental control instead of absolute mapping
-                d.ctrl[abdomen_z_id] += axis_val * 0.01   # small step per tick
-
-                # Optional: clamp to actuator range (e.g. [-1, 1])
-                d.ctrl[abdomen_z_id] = max(-1.0, min(1.0, d.ctrl[abdomen_z_id]))
-
+            d.ctrl[gripper_leftright_id] += axis_lr * 0.05
+            d.ctrl[gripper_leftright_id] = max(-6.0, min(6.0, d.ctrl[gripper_leftright_id]))
 
             mujoco.mj_step(m, d)
             viewer.sync()
