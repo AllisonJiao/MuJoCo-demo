@@ -3,6 +3,9 @@ import mujoco
 import mujoco.viewer
 from multiprocessing import Queue
 
+# Deadzone threshold
+DEADZONE = 0.1
+
 def sim_loop(q: Queue):
     # Load model
     m = mujoco.MjModel.from_xml_path("model/humanoid.xml")
@@ -19,7 +22,17 @@ def sim_loop(q: Queue):
             # Consume joystick values if available
             while not q.empty():
                 axis_val = q.get_nowait()
-                d.ctrl[abdomen_z_id] = axis_val * 0.5  # scale torque
+
+                # Apply deadzone filter
+                if abs(axis_val) < DEADZONE:
+                    axis_val = 0.0
+
+                # Incremental control instead of absolute mapping
+                d.ctrl[abdomen_z_id] += axis_val * 0.01   # small step per tick
+
+                # Optional: clamp to actuator range (e.g. [-1, 1])
+                d.ctrl[abdomen_z_id] = max(-1.0, min(1.0, d.ctrl[abdomen_z_id]))
+
 
             mujoco.mj_step(m, d)
             viewer.sync()
