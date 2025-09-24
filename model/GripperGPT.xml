@@ -9,7 +9,7 @@
         <!-- Block -->
         <body name="block" pos="0 0 0.05">
             <joint type="free" name="block_free"/>
-            <geom type="box" size="0.05 0.05 0.05" rgba="0.2 0.6 0.9 1" mass="0.02" friction = "0.5"/>
+            <geom type="box" size="0.05 0.05 0.05" rgba="0.2 0.6 0.9 1" mass="0.25" friction = "0.5"/>
         </body>
 
         <!-- Gripper -->
@@ -37,9 +37,9 @@
 
     <actuator>
         <motor name = "up/down" joint="gripper_updown" ctrlrange="-15 15" ctrllimited="true"/>
-        <motor name = "left/right" joint="gripper_leftright" ctrlrange="-6 6" ctrllimited="true"/>
+        <motor name = "left/right" joint="gripper_leftright" ctrlrange="-10 10" ctrllimited="true"/>
 
-        <motor name = "left_finger" joint="left_slide" ctrlrange="-0.5 1" ctrllimited="true"/>
-        <motor name = "right_finger" joint="right_slide" ctrlrange="-0.5 1" ctrllimited="true"/>
+        <motor name = "left_finger" joint="left_slide" ctrlrange="-1 3" ctrllimited="true"/>
+        <motor name = "right_finger" joint="right_slide" ctrlrange="-1 3" ctrllimited="true"/>
     </actuator>
 </mujoco>

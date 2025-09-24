@@ -38,16 +38,16 @@ def sim_loop(q: Queue):
                     axis_lr = val
                 elif target == "leftup":
                     d.ctrl[gripper_leftfinger_id] += 0.01
-                    d.ctrl[gripper_leftfinger_id] = min(1.0, d.ctrl[gripper_leftfinger_id])
+                    d.ctrl[gripper_leftfinger_id] = min(3.0, d.ctrl[gripper_leftfinger_id])
                 elif target == "rightup":
                     d.ctrl[gripper_rightfinger_id] += 0.01
-                    d.ctrl[gripper_rightfinger_id] = min(1.0, d.ctrl[gripper_rightfinger_id])
+                    d.ctrl[gripper_rightfinger_id] = min(3.0, d.ctrl[gripper_rightfinger_id])
                 elif target == "leftdown":
                     d.ctrl[gripper_leftfinger_id] -= 0.01
-                    d.ctrl[gripper_leftfinger_id] = max(-0.5, d.ctrl[gripper_leftfinger_id])
+                    d.ctrl[gripper_leftfinger_id] = max(-1.0, d.ctrl[gripper_leftfinger_id])
                 elif target == "rightdown":
                     d.ctrl[gripper_rightfinger_id] -= 0.01
-                    d.ctrl[gripper_rightfinger_id] = max(-0.5, d.ctrl[gripper_rightfinger_id])
+                    d.ctrl[gripper_rightfinger_id] = max(-1.0, d.ctrl[gripper_rightfinger_id])
             
             # Apply deadzone filter
             if abs(axis_ud) < DEADZONE:
@@ -60,7 +60,7 @@ def sim_loop(q: Queue):
             d.ctrl[gripper_updown_id] = max(-15.0, min(15.0, d.ctrl[gripper_updown_id]))
 
             d.ctrl[gripper_leftright_id] += axis_lr * 0.05
-            d.ctrl[gripper_leftright_id] = max(-6.0, min(6.0, d.ctrl[gripper_leftright_id]))
+            d.ctrl[gripper_leftright_id] = max(-10.0, min(10.0, d.ctrl[gripper_leftright_id]))
 
             mujoco.mj_step(m, d)
             viewer.sync()
