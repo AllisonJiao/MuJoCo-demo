@@ -1,6 +1,6 @@
 from multiprocessing import Process, Queue
-from joystick import joystick_loop
-from viewer import sim_loop
+from joystick_new import joystick_loop
+from franka_emika_panda_controller import sim_loop
 
 if __name__ == "__main__":
     q = Queue()

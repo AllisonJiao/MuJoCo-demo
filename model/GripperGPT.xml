@@ -9,7 +9,7 @@
         <!-- Block -->
         <body name="block" pos="0 0 0.05">
             <joint type="free" name="block_free"/>
-            <geom type="box" size="0.05 0.05 0.05" rgba="0.2 0.6 0.9 1" mass="0.25" friction = "0.5"/>
+            <geom type="box" size="0.05 0.05 0.05" rgba="0.2 0.6 0.9 1" mass="0.25" friction = "2.0"/>
         </body>
 
         <!-- Gripper -->
