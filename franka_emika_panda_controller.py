@@ -8,7 +8,7 @@ DEADZONE = 0.1
 
 def sim_loop(q: Queue):
     # Load model
-    m = mujoco.MjModel.from_xml_path("franka_emika_panda/mjx_panda.xml")
+    m = mujoco.MjModel.from_xml_path("franka_emika_panda/mjx_single_cube.xml")
     d = mujoco.MjData(m)
 
     # Get actuator id
@@ -42,7 +42,7 @@ def sim_loop(q: Queue):
             if abs(axis_left) < DEADZONE:
                 axis_left = 0.0
             
-            d.ctrl[actuator_id[curr_id]] -= axis_left * 0.05   # small step per tick
+            d.ctrl[actuator_id[curr_id]] -= axis_left * 0.01   # small step per tick
 
             mujoco.mj_step(m, d)
             viewer.sync()
