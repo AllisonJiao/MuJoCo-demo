@@ -1,6 +1,7 @@
 import time
 import mujoco
 import mujoco.viewer
+import json
 from multiprocessing import Queue
 
 # Deadzone threshold
@@ -17,6 +18,11 @@ def sim_loop(q: Queue):
     actuator_name = ["actuator1", "actuator2", "actuator3", "actuator4", "actuator5", "actuator6", "actuator7", "actuator8"]
     for name in actuator_name:
         actuator_id.append(mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, name))
+    
+    # Get cube body id
+    cube_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "cube")
+    
+    trajectory = []
 
     with mujoco.viewer.launch_passive(m, d) as viewer:
         start = time.time()
@@ -37,6 +43,22 @@ def sim_loop(q: Queue):
                     curr_id = max(0, curr_id - 1)
                 elif target == "down":
                     curr_id = min(7, curr_id + 1)
+                elif target == "save_step":
+                    # Record state + action
+                    obs = {
+                        "time": d.time,
+                        "qpos": d.qpos.tolist(),
+                        "qvel": d.qvel.tolist(),
+                        "cube_pos": d.xpos[cube_id].tolist(),
+                        "cube_quat": d.xquat[cube_id].tolist(),
+                        "ctrl": d.ctrl.tolist()
+                    }
+                    trajectory.append(obs)
+                    print(f"Saved step {len(trajectory)} at time {d.time:.2f}s")
+                elif target == "export_json":
+                    with open("trajectory.json", "w") as f:
+                        json.dump(trajectory, f, indent=2)
+                    print("Exported trajectory with", len(trajectory), "steps")
             
             # Apply deadzone filter
             if abs(axis_left) < DEADZONE:

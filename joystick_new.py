@@ -23,11 +23,11 @@ def joystick_loop(q: Queue):
                 print(f"Button {event.button} pressed")
 
                 if event.button == 1:  # o
-                    q.put(("reset", 1))
+                    q.put(("save_step", 1))
                 elif event.button == 3:  # triangle
                     q.put(("up", 1))
                 elif event.button == 2:  # square
-                    q.put(("pause", 1))
+                    q.put(("export_json", 1))
                 elif event.button == 0:  # x
                     q.put(("down", 1))
         time.sleep(0.01)  # 100 Hz update
