@@ -11,7 +11,7 @@ DEADZONE = 0.1
 
 def sim_loop(q: Queue):
     # Load model
-    m = mujoco.MjModel.from_xml_path("franka_emika_panda/mjx_single_cube.xml")
+    m = mujoco.MjModel.from_xml_path("model/franka_emika_panda/mjx_single_cube.xml")
     d = mujoco.MjData(m)
 
     # Get actuator id
