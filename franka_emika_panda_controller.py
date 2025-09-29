@@ -1,7 +1,8 @@
 import time
 import mujoco
 import mujoco.viewer
-import json
+import h5py
+import numpy as np
 from multiprocessing import Queue
 
 # Deadzone threshold
@@ -47,18 +48,24 @@ def sim_loop(q: Queue):
                     # Record state + action
                     obs = {
                         "time": d.time,
-                        "qpos": d.qpos.tolist(),
-                        "qvel": d.qvel.tolist(),
-                        "cube_pos": d.xpos[cube_id].tolist(),
-                        "cube_quat": d.xquat[cube_id].tolist(),
-                        "ctrl": d.ctrl.tolist()
+                        "qpos": np.array(d.qpos, dtype=np.float32),
+                        "qvel": np.array(d.qvel, dtype=np.float32),
+                        "cube_pos": np.array(d.xpos[cube_id], dtype=np.float32),
+                        "cube_quat": np.array(d.xquat[cube_id], dtype=np.float32),
+                        "ctrl": np.array(d.ctrl, dtype=np.float32)
                     }
                     trajectory.append(obs)
                     print(f"Saved step {len(trajectory)} at time {d.time:.2f}s")
-                elif target == "export_json":
-                    with open("trajectory.json", "w") as f:
-                        json.dump(trajectory, f, indent=2)
-                    print("Exported trajectory with", len(trajectory), "steps")
+                elif target == "export_hdf5":
+                    # Save everything into HDF5
+                    with h5py.File("trajectory.hdf5", "w") as f:
+                        f.create_dataset("time", data=[step["time"] for step in trajectory])
+                        f.create_dataset("qpos", data=[step["qpos"] for step in trajectory])
+                        f.create_dataset("qvel", data=[step["qvel"] for step in trajectory])
+                        f.create_dataset("cube_pos", data=[step["cube_pos"] for step in trajectory])
+                        f.create_dataset("cube_quat", data=[step["cube_quat"] for step in trajectory])
+                        f.create_dataset("ctrl", data=[step["ctrl"] for step in trajectory])
+                    print("Exported trajectory with", len(trajectory), "steps to trajectory.hdf5")
             
             # Apply deadzone filter
             if abs(axis_left) < DEADZONE:
