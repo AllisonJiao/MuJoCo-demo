@@ -3,6 +3,7 @@ import mujoco
 import mujoco.viewer
 import h5py
 import numpy as np
+from HDF5_exporter import save_hdf5_to_mongo
 from multiprocessing import Queue
 
 # Deadzone threshold
@@ -66,7 +67,7 @@ def sim_loop(q: Queue):
                         f.create_dataset("cube_quat", data=[step["cube_quat"] for step in trajectory])
                         f.create_dataset("ctrl", data=[step["ctrl"] for step in trajectory])
                     print("Exported trajectory with", len(trajectory), "steps to trajectory.hdf5")
-            
+                    save_hdf5_to_mongo("trajectory.hdf5")
             # Apply deadzone filter
             if abs(axis_left) < DEADZONE:
                 axis_left = 0.0
