@@ -3,7 +3,7 @@ import mujoco
 import mujoco.viewer
 import h5py
 import numpy as np
-from HDF5_exporter import save_hdf5_to_mongo
+from npz_exporter import save_npz_to_mongo
 from multiprocessing import Queue
 
 # Deadzone threshold
@@ -57,17 +57,19 @@ def sim_loop(q: Queue):
                     }
                     trajectory.append(obs)
                     print(f"Saved step {len(trajectory)} at time {d.time:.2f}s")
-                elif target == "export_hdf5":
-                    # Save everything into HDF5
-                    with h5py.File("trajectory.hdf5", "w") as f:
-                        f.create_dataset("time", data=[step["time"] for step in trajectory])
-                        f.create_dataset("qpos", data=[step["qpos"] for step in trajectory])
-                        f.create_dataset("qvel", data=[step["qvel"] for step in trajectory])
-                        f.create_dataset("cube_pos", data=[step["cube_pos"] for step in trajectory])
-                        f.create_dataset("cube_quat", data=[step["cube_quat"] for step in trajectory])
-                        f.create_dataset("ctrl", data=[step["ctrl"] for step in trajectory])
-                    print("Exported trajectory with", len(trajectory), "steps to trajectory.hdf5")
-                    save_hdf5_to_mongo("trajectory.hdf5")
+                elif target == "export_np":
+                    # Save everything into NumPy arrays
+                    np.savez_compressed(
+                        "trajectory.npz",
+                        time=np.array([step["time"] for step in trajectory], dtype=np.float32),
+                        qpos=np.array([step["qpos"] for step in trajectory], dtype=np.float32),
+                        qvel=np.array([step["qvel"] for step in trajectory], dtype=np.float32),
+                        cube_pos=np.array([step["cube_pos"] for step in trajectory], dtype=np.float32),
+                        cube_quat=np.array([step["cube_quat"] for step in trajectory], dtype=np.float32),
+                        ctrl=np.array([step["ctrl"] for step in trajectory], dtype=np.float32),
+                    )
+                    print("Exported trajectory with", len(trajectory), "steps to trajectory.npz")
+                    save_npz_to_mongo("trajectory.npz")
             # Apply deadzone filter
             if abs(axis_left) < DEADZONE:
                 axis_left = 0.0
