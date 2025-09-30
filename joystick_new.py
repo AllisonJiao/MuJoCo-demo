@@ -27,7 +27,7 @@ def joystick_loop(q: Queue):
                 elif event.button == 3:  # triangle
                     q.put(("up", 1))
                 elif event.button == 2:  # square
-                    q.put(("export_hdf5", 1))
+                    q.put(("export_np", 1))
                 elif event.button == 0:  # x
                     q.put(("down", 1))
         time.sleep(0.01)  # 100 Hz update
