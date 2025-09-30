@@ -1,10 +1,11 @@
 from pymongo import MongoClient
 import numpy as np
+import datetime
 import bson
 
 def save_npz_to_mongo(npz_file):
     # Match docker-compose credentials
-    client = MongoClient("mongodb://localhost:27017/")
+    client = MongoClient("mongodb://localhost:27017")
     
     db = client["robot_data"]       # custom DB
     collection = db["trajectories"] # collection for trajectories
@@ -14,7 +15,7 @@ def save_npz_to_mongo(npz_file):
 
     # Convert arrays to lists (MongoDB doesn’t store raw numpy arrays well)
     doc = {
-        "filename": npz_file,
+        "filename": f"trajectory_{datetime.datetime.utcnow().isoformat()}.npz",
         "arrays": {key: data[key].tolist() for key in data.files},
     }
 
