@@ -56,6 +56,8 @@ def gripper_sim_loop(q: Queue):
 
     # Get cube body id
     cube_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "block")
+    # Get target id
+    target_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "target")
     
     trajectory = []
 
@@ -88,6 +90,8 @@ def gripper_sim_loop(q: Queue):
                         "qvel": np.array(d.qvel, dtype=np.float32),
                         "cube_pos": np.array(d.xpos[cube_id], dtype=np.float32),
                         "cube_quat": np.array(d.xquat[cube_id], dtype=np.float32),
+                        "target_pos": np.array(d.xpos[target_id], dtype=np.float32),
+                        "target_quat": np.array(d.xquat[target_id], dtype=np.float32),
                         "ctrl": np.array(d.ctrl, dtype=np.float32)
                     }
                     trajectory.append(obs)
@@ -108,13 +112,15 @@ def gripper_sim_loop(q: Queue):
                         qvel=np.array([step["qvel"] for step in trajectory], dtype=np.float32),
                         cube_pos=np.array([step["cube_pos"] for step in trajectory], dtype=np.float32),
                         cube_quat=np.array([step["cube_quat"] for step in trajectory], dtype=np.float32),
+                        target_pos= np.array([step["target_pos"] for step in trajectory], dtype=np.float32),
+                        target_quat= np.array([step["target_quat"] for step in trajectory], dtype=np.float32),
                         ctrl=np.array([step["ctrl"] for step in trajectory], dtype=np.float32),
                     )
 
                     print(f"✅ Exported trajectory with {len(trajectory)} steps to {filepath}")
 
                     # Now pass the same path to Mongo, comment out if not needed
-                    save_npz_to_mongo(filepath)
+                    # save_npz_to_mongo(filepath)
             
             # Apply deadzone filter
             if abs(axis_ud) < DEADZONE:
