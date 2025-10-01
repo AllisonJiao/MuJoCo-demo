@@ -2,7 +2,7 @@ import pygame
 import time
 from multiprocessing import Queue
 
-def joystick_loop(q: Queue):
+def franka_joystick_loop(q: Queue):
     pygame.init()
     pygame.joystick.init()
     if pygame.joystick.get_count() == 0:

@@ -2,10 +2,10 @@ import argparse
 from multiprocessing import Process, Queue
 
 # Import loops
-from joystick_new import joystick_loop           # Franka joystick
-from franka_emika_panda_controller import sim_loop
-from gripper_v1_code.gripper_controller import gripper_sim_loop
-from gripper_v1_code.joystick import gripper_joystick_loop   # Gripper joystick
+from franka_mj.franka_joystick import franka_joystick_loop           # Franka joystick
+from franka_mj.franka_controller import franka_sim_loop
+from gripper_mj.gripper_controller import gripper_sim_loop
+from gripper_mj.gripper_joystick import gripper_joystick_loop   # Gripper joystick
 
 def main():
     parser = argparse.ArgumentParser(description="Run Mujoco simulation with different controllers")
@@ -22,8 +22,8 @@ def main():
 
     # Pair controller with joystick
     if args.control == "franka":
-        joystick_fn = joystick_loop
-        sim_fn = sim_loop
+        joystick_fn = franka_joystick_loop
+        sim_fn = franka_sim_loop
     else:
         joystick_fn = gripper_joystick_loop
         sim_fn = gripper_sim_loop

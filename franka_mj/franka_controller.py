@@ -1,7 +1,6 @@
 import time
 import mujoco
 import mujoco.viewer
-import h5py
 import numpy as np
 from npz_exporter import save_npz_to_mongo
 from multiprocessing import Queue
@@ -9,7 +8,7 @@ from multiprocessing import Queue
 # Deadzone threshold
 DEADZONE = 0.1
 
-def sim_loop(q: Queue):
+def franka_sim_loop(q: Queue):
     # Load model
     m = mujoco.MjModel.from_xml_path("model/franka_emika_panda/mjx_single_cube.xml")
     d = mujoco.MjData(m)
@@ -70,6 +69,7 @@ def sim_loop(q: Queue):
                     )
                     print("Exported trajectory with", len(trajectory), "steps to trajectory.npz")
                     save_npz_to_mongo("trajectory.npz")
+
             # Apply deadzone filter
             if abs(axis_left) < DEADZONE:
                 axis_left = 0.0

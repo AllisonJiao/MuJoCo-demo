@@ -26,11 +26,7 @@ def gripper_joystick_loop(q: Queue):
                 print(f"Button {event.button} pressed")
 
                 if event.button == 1:  # o
-                    q.put(("leftup", 1))
-                elif event.button == 3:  # triangle
-                    q.put(("rightup", 1))
+                    q.put(("save_step", 1))
                 elif event.button == 2:  # square
-                    q.put(("leftdown", 1))
-                elif event.button == 0:  # x
-                    q.put(("rightdown", 1))
+                    q.put(("export_np", 1))
         time.sleep(0.01)  # 100 Hz update
