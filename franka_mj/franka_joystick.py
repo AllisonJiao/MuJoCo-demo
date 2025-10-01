@@ -2,7 +2,7 @@ import pygame
 import time
 from multiprocessing import Queue
 
-def joystick_loop(q: Queue):
+def franka_joystick_loop(q: Queue):
     pygame.init()
     pygame.joystick.init()
     if pygame.joystick.get_count() == 0:
@@ -14,23 +14,20 @@ def joystick_loop(q: Queue):
     while True:
         pygame.event.pump()
         # Left stick
-        axis_ud = joystick.get_axis(1)  # [-1, 1]
-        # Left stick
-        axis_lr = joystick.get_axis(2)  # [-1, 1]
+        axis_left = joystick.get_axis(1)  # [-1, 1]
         
-        q.put(("updown", axis_ud))  
-        q.put(("leftright", axis_lr))
+        q.put(("actuator_val", axis_left))
 
         for event in pygame.event.get():
             if event.type == pygame.JOYBUTTONDOWN:
                 print(f"Button {event.button} pressed")
 
                 if event.button == 1:  # o
-                    q.put(("leftup", 1))
+                    q.put(("save_step", 1))
                 elif event.button == 3:  # triangle
-                    q.put(("rightup", 1))
+                    q.put(("up", 1))
                 elif event.button == 2:  # square
-                    q.put(("leftdown", 1))
+                    q.put(("export_np", 1))
                 elif event.button == 0:  # x
-                    q.put(("rightdown", 1))
+                    q.put(("down", 1))
         time.sleep(0.01)  # 100 Hz update

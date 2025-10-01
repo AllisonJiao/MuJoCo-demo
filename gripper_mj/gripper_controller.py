@@ -1,28 +1,26 @@
 import time
 import mujoco
 import mujoco.viewer
-import h5py
 import numpy as np
+import os
+import datetime
 from npz_exporter import save_npz_to_mongo
 from multiprocessing import Queue
 
 # Deadzone threshold
 DEADZONE = 0.1
 
-def sim_loop(q: Queue):
+def gripper_sim_loop(q: Queue):
     # Load model
-    m = mujoco.MjModel.from_xml_path("model/franka_emika_panda/mjx_single_cube.xml")
+    m = mujoco.MjModel.from_xml_path("model/GripperGPT.xml")
     d = mujoco.MjData(m)
 
-    # Get actuator id
-    curr_id = 0
-    actuator_id = []
-    actuator_name = ["actuator1", "actuator2", "actuator3", "actuator4", "actuator5", "actuator6", "actuator7", "actuator8"]
-    for name in actuator_name:
-        actuator_id.append(mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, name))
-    
+    # Get actuator id for gripper_updown, gripper_leftright
+    gripper_updown_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "up/down")
+    gripper_leftright_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "left/right")
+
     # Get cube body id
-    cube_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "cube")
+    cube_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "block")
     
     trajectory = []
 
@@ -30,7 +28,8 @@ def sim_loop(q: Queue):
         start = time.time()
 
         # Initialize control values
-        axis_left = 0.0
+        axis_ud = 0.0
+        axis_lr = 0.0
 
         while viewer.is_running() and time.time() - start < 600:
             step_start = time.time()
@@ -39,12 +38,10 @@ def sim_loop(q: Queue):
             while not q.empty():
                 target, val = q.get_nowait()
 
-                if target == "actuator_val":
-                    axis_left = val
-                elif target == "up":
-                    curr_id = max(0, curr_id - 1)
-                elif target == "down":
-                    curr_id = min(7, curr_id + 1)
+                if target == "updown":
+                    axis_ud = val
+                elif target == "leftright":
+                    axis_lr = val
                 elif target == "save_step":
                     # Record state + action
                     obs = {
@@ -58,9 +55,16 @@ def sim_loop(q: Queue):
                     trajectory.append(obs)
                     print(f"Saved step {len(trajectory)} at time {d.time:.2f}s")
                 elif target == "export_np":
+                    # Ensure dataset directory exists
+                    os.makedirs("dataset", exist_ok=True)
+
+                    # Unique timestamped filename
+                    timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                    filepath = os.path.join("dataset", f"trajectory_{timestamp}.npz")
+
                     # Save everything into NumPy arrays
                     np.savez_compressed(
-                        "trajectory.npz",
+                        filepath,
                         time=np.array([step["time"] for step in trajectory], dtype=np.float32),
                         qpos=np.array([step["qpos"] for step in trajectory], dtype=np.float32),
                         qvel=np.array([step["qvel"] for step in trajectory], dtype=np.float32),
@@ -68,13 +72,24 @@ def sim_loop(q: Queue):
                         cube_quat=np.array([step["cube_quat"] for step in trajectory], dtype=np.float32),
                         ctrl=np.array([step["ctrl"] for step in trajectory], dtype=np.float32),
                     )
-                    print("Exported trajectory with", len(trajectory), "steps to trajectory.npz")
-                    save_npz_to_mongo("trajectory.npz")
-            # Apply deadzone filter
-            if abs(axis_left) < DEADZONE:
-                axis_left = 0.0
+
+                    print(f"✅ Exported trajectory with {len(trajectory)} steps to {filepath}")
+
+                    # Now pass the same path to Mongo, comment out if not needed
+                    save_npz_to_mongo(filepath)
             
-            d.ctrl[actuator_id[curr_id]] -= axis_left * 0.01   # small step per tick
+            # Apply deadzone filter
+            if abs(axis_ud) < DEADZONE:
+                axis_ud = 0.0
+            
+            if abs(axis_lr) < DEADZONE:
+                axis_lr = 0.0
+            
+            d.ctrl[gripper_updown_id] -= axis_ud * 0.05   # small step per tick
+            d.ctrl[gripper_updown_id] = max(-15.0, min(15.0, d.ctrl[gripper_updown_id]))
+
+            d.ctrl[gripper_leftright_id] += axis_lr * 0.05
+            d.ctrl[gripper_leftright_id] = max(-10.0, min(10.0, d.ctrl[gripper_leftright_id]))
 
             mujoco.mj_step(m, d)
             viewer.sync()
