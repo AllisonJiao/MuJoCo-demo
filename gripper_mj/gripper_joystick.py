@@ -15,11 +15,13 @@ def gripper_joystick_loop(q: Queue):
         pygame.event.pump()
         # Left stick
         axis_ud = joystick.get_axis(1)  # [-1, 1]
-        # Left stick
+        # Right stick
         axis_lr = joystick.get_axis(2)  # [-1, 1]
+        axis_fb = joystick.get_axis(3)  # [-1, 1]
         
         q.put(("updown", axis_ud))  
         q.put(("leftright", axis_lr))
+        q.put(("forwardbackward", axis_fb))
 
         for event in pygame.event.get():
             if event.type == pygame.JOYBUTTONDOWN:

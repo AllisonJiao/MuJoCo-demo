@@ -18,6 +18,7 @@ def gripper_sim_loop(q: Queue):
     # Get actuator id for gripper_updown, gripper_leftright
     gripper_updown_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "up/down")
     gripper_leftright_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "left/right")
+    gripper_forwardbackward_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "forward/backward")
 
     # Get cube body id
     cube_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "block")
@@ -30,6 +31,7 @@ def gripper_sim_loop(q: Queue):
         # Initialize control values
         axis_ud = 0.0
         axis_lr = 0.0
+        axis_fb = 0.0
 
         while viewer.is_running() and time.time() - start < 600:
             step_start = time.time()
@@ -42,6 +44,8 @@ def gripper_sim_loop(q: Queue):
                     axis_ud = val
                 elif target == "leftright":
                     axis_lr = val
+                elif target == "forwardbackward":
+                    axis_fb = val
                 elif target == "save_step":
                     # Record state + action
                     obs = {
@@ -84,12 +88,18 @@ def gripper_sim_loop(q: Queue):
             
             if abs(axis_lr) < DEADZONE:
                 axis_lr = 0.0
+
+            if abs(axis_fb) < DEADZONE:
+                axis_fb = 0.0
             
             d.ctrl[gripper_updown_id] -= axis_ud * 0.05   # small step per tick
             d.ctrl[gripper_updown_id] = max(-15.0, min(15.0, d.ctrl[gripper_updown_id]))
 
             d.ctrl[gripper_leftright_id] += axis_lr * 0.05
             d.ctrl[gripper_leftright_id] = max(-10.0, min(10.0, d.ctrl[gripper_leftright_id]))
+
+            d.ctrl[gripper_forwardbackward_id] -= axis_fb * 0.05
+            d.ctrl[gripper_forwardbackward_id] = max(-10.0, min(10.0, d.ctrl[gripper_forwardbackward_id]))
 
             mujoco.mj_step(m, d)
             viewer.sync()
