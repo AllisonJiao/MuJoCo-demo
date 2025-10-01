@@ -12,6 +12,12 @@
             <geom type="box" size="0.05 0.05 0.05" rgba="0.2 0.6 0.9 1" mass="0.1" friction = "2.0"/>
         </body>
 
+        <!-- Target -->
+        <body name="target" pos="0 0 0.05">
+            <joint type="free" name="target_free"/>
+            <geom type="box" size="0.1 0.1 0.001" rgba="0 1 0 1" mass="0.1" friction = "2.0"/>
+        </body>
+
         <!-- Gripper -->
         <body name="gripper" pos="0 0 0.3">
             <!-- sideways motion -->

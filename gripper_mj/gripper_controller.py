@@ -7,6 +7,37 @@ import datetime
 from npz_exporter import save_npz_to_mongo
 from multiprocessing import Queue
 
+def rand_spawn(m, d):
+    # Spawn gripper, block, and the target in random positions
+
+    # Block
+    block_joint = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "block_free")
+    block_adr = m.jnt_qposadr[block_joint]
+    # Set (x, y, z)
+    d.qpos[block_adr:block_adr+3] = [
+        np.random.uniform(-0.5, 0.5),   # x
+        np.random.uniform(-0.5, 0.5),   # y
+        0.05                            # z
+    ]
+    # Set orientation quaternion (w, x, y, z) = identity
+    d.qpos[block_adr+3:block_adr+7] = [1, 0, 0, 0]
+    # Force MuJoCo to recompute positions
+    mujoco.mj_forward(m, d)
+
+    # Target
+    target_joint = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "target_free")
+    target_adr = m.jnt_qposadr[target_joint]
+    # Set (x, y, z)
+    d.qpos[target_adr:target_adr+3] = [
+        np.random.uniform(-0.5, 0.5),   # x
+        np.random.uniform(-0.5, 0.5),   # y
+        0.05                            # z
+    ]
+    # Set orientation quaternion (w, x, y, z) = identity
+    d.qpos[target_adr+3:target_adr+7] = [1, 0, 0, 0]
+    # Force MuJoCo to recompute positions
+    mujoco.mj_forward(m, d)
+
 # Deadzone threshold
 DEADZONE = 0.1
 
@@ -14,6 +45,9 @@ def gripper_sim_loop(q: Queue):
     # Load model
     m = mujoco.MjModel.from_xml_path("model/GripperGPT.xml")
     d = mujoco.MjData(m)
+
+    # Randomize spawn before simulation starts
+    rand_spawn(m, d)
 
     # Get actuator id for gripper_updown, gripper_leftright
     gripper_updown_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, "up/down")
