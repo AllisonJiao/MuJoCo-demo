@@ -6,7 +6,7 @@ from multiprocessing import Queue
 # Deadzone threshold
 DEADZONE = 0.1
 
-def sim_loop(q: Queue):
+def gripper_sim_loop(q: Queue):
     # Load model
     m = mujoco.MjModel.from_xml_path("model/GripperGPT.xml")
     d = mujoco.MjData(m)

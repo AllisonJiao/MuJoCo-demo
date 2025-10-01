@@ -15,5 +15,5 @@ docker compose up -d
 ```
 5. Run the MuJoCo simulation
 ```bash
-mjpython main.py
+mjpython main.py --control [model_name]
 ```
