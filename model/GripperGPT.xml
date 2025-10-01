@@ -16,10 +16,11 @@
         <body name="gripper" pos="0 0 0.3">
             <!-- sideways motion -->
             <joint name="gripper_leftright" type="slide" axis="1 0 0" range="-6 6" stiffness="20" damping="5"/>
+            <joint name="gripper_forwardbackward" type="slide" axis="0 1 0" range="-6 6" stiffness="20" damping="5"/>
             <!-- vertical motion -->
             <joint name="gripper_updown" type="slide" axis="0 0 1" range="-1.0 0.0" stiffness="20" damping="5"/>
 
-            <geom type="sphere" size="0.001" mass="0.1" rgba="0 0 0 0"/>
+            <geom type="box" size="0.08 0.04 0.01" pos="0 0 0.1" mass="0.1" rgba="1 1 1 1"/>
 
             <!-- Left finger -->
             <body name="left_finger" pos="-0.06 0 0">
@@ -42,6 +43,7 @@
     <actuator>
         <motor name = "up/down" joint="gripper_updown" ctrlrange="-15 15" ctrllimited="true"/>
         <motor name = "left/right" joint="gripper_leftright" ctrlrange="-10 10" ctrllimited="true"/>
+        <motor name = "forward/backward" joint="gripper_forwardbackward" ctrlrange="-10 10" ctrllimited="true"/>
 
         <motor name = "finger" joint="left_slide" ctrlrange="-2 5" ctrllimited="true"/>
     </actuator>
