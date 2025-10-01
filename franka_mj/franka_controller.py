@@ -2,6 +2,8 @@ import time
 import mujoco
 import mujoco.viewer
 import numpy as np
+import os
+import datetime
 from npz_exporter import save_npz_to_mongo
 from multiprocessing import Queue
 
@@ -57,9 +59,17 @@ def franka_sim_loop(q: Queue):
                     trajectory.append(obs)
                     print(f"Saved step {len(trajectory)} at time {d.time:.2f}s")
                 elif target == "export_np":
+                    # Ensure dataset directory exists
+                    # Ensure dataset directory exists
+                    os.makedirs("dataset", exist_ok=True)
+
+                    # Unique timestamped filename
+                    timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                    filepath = os.path.join("dataset", f"trajectory_{timestamp}.npz")
+
                     # Save everything into NumPy arrays
                     np.savez_compressed(
-                        "trajectory.npz",
+                        filepath,
                         time=np.array([step["time"] for step in trajectory], dtype=np.float32),
                         qpos=np.array([step["qpos"] for step in trajectory], dtype=np.float32),
                         qvel=np.array([step["qvel"] for step in trajectory], dtype=np.float32),
@@ -67,8 +77,11 @@ def franka_sim_loop(q: Queue):
                         cube_quat=np.array([step["cube_quat"] for step in trajectory], dtype=np.float32),
                         ctrl=np.array([step["ctrl"] for step in trajectory], dtype=np.float32),
                     )
-                    print("Exported trajectory with", len(trajectory), "steps to trajectory.npz")
-                    save_npz_to_mongo("trajectory.npz")
+
+                    print(f"✅ Exported trajectory with {len(trajectory)} steps to {filepath}")
+
+                    # Now pass the same path to Mongo, comment out if not needed
+                    save_npz_to_mongo(filepath)
 
             # Apply deadzone filter
             if abs(axis_left) < DEADZONE:
