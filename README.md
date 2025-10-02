@@ -9,7 +9,7 @@ conda create -n mujoco python=3.9
 ```bash
 pip install -r requirements.txt
 ```
-4. Connect to docker and MongoDB (to save HDF5 dataset)
+4. Connect to docker and MongoDB (optional, comment out in code if not needed)
 ```bash
 docker compose up -d
 ```
