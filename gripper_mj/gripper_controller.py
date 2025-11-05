@@ -4,8 +4,9 @@ import mujoco.viewer
 import numpy as np
 import os
 import datetime
-from npz_exporter import save_npz_to_mongo
+#from npz_exporter import save_npz_to_mongo
 from multiprocessing import Queue
+from scipy.spatial.transform import Rotation
 
 def rand_spawn(m, d):
     # Spawn gripper, block, and the target in random positions
@@ -36,6 +37,27 @@ def rand_spawn(m, d):
     # Set orientation quaternion (w, x, y, z) = identity
     d.qpos[target_adr+3:target_adr+7] = [1, 0, 0, 0]
     # Force MuJoCo to recompute positions
+
+    
+    # Reset camera: pose between block and gripper
+    cam_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, "main_camera")
+    cam_pos = m.cam_pos[cam_id]
+    target_pos = (d.qpos[block_adr:block_adr+3] + d.qpos[target_adr:target_adr+3])*0.5
+    look_at_mat = np.zeros((3, 3))
+
+    # z
+    look_at_mat[:, 2] = (cam_pos - target_pos) / np.linalg.norm(cam_pos - target_pos)
+
+    # x
+    look_at_mat[:, 0] = np.cross(np.array([0, 0, 1]), look_at_mat[:, 2])
+    look_at_mat[:, 0] /= np.linalg.norm(look_at_mat[:, 0])
+
+    # y
+    look_at_mat[:, 1] = np.cross(look_at_mat[:, 2], look_at_mat[:, 0])
+    look_at_mat[:, 1] /= np.linalg.norm(look_at_mat[:, 1])
+
+    m.cam_quat[cam_id] = Rotation.from_matrix(look_at_mat).as_quat(scalar_first=True)
+
     mujoco.mj_forward(m, d)
 
 # Deadzone threshold
