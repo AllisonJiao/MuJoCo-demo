@@ -4,7 +4,7 @@ import mujoco.viewer
 import numpy as np
 import os
 import datetime
-from npz_exporter import save_npz_to_mongo
+#from npz_exporter import save_npz_to_mongo
 from multiprocessing import Queue
 
 def rand_spawn(m, d):
