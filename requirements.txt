@@ -1,3 +1,4 @@
 pygame
 h5py
 pymongo
+stable_baselines3
