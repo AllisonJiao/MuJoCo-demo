@@ -20,7 +20,7 @@ class GripperEnv(gym.Env):
         self.max_steps = 100
         
         # load xml model
-        model_path = os.path.join("model", "GripperGPT.xml")
+        model_path = os.path.join("../model", "GripperGPT.xml")
         self.model = mujoco.MjModel.from_xml_path(model_path)
         self.data = mujoco.MjData(self.model)
         
