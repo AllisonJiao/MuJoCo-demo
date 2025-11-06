@@ -56,7 +56,10 @@ def rand_spawn(m, d):
     look_at_mat[:, 1] = np.cross(look_at_mat[:, 2], look_at_mat[:, 0])
     look_at_mat[:, 1] /= np.linalg.norm(look_at_mat[:, 1])
 
-    m.cam_quat[cam_id] = Rotation.from_matrix(look_at_mat).as_quat(scalar_first=True)
+    # Convert rotation matrix to quaternion
+    # scipy returns [x, y, z, w], but MuJoCo expects [w, x, y, z]
+    quat_xyzw = Rotation.from_matrix(look_at_mat).as_quat()
+    m.cam_quat[cam_id] = [quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]]  # Convert to [w, x, y, z]
 
     mujoco.mj_forward(m, d)
 

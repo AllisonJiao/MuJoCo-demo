@@ -1,6 +1,11 @@
 import os
 import gymnasium as gym
 from gymnasium import spaces
+
+from gymnasium import utils
+from gymnasium.spaces import Box
+from mujoco_py_env import MuJocoPyEnv
+
 import numpy as np
 import mujoco
 from gripper_controller import rand_spawn
@@ -13,16 +18,34 @@ Reward: - (distance between Block and Gripper)
 Success: Gripper directly above the block
 Fail: Over 100 iterations (?)
 """
-class GripperEnv(gym.Env):
-    def __init__(self):
+class GripperEnv(MuJocoPyEnv, utils.EzPickle):
+    metadata = {
+        "render_modes": [
+            "human", 
+            "rgb_array",
+            "depth_array"
+        ],
+        "render_fps": 60,
+    }
+
+    def __init__(self, **kwargs):
+        utils.EzPickle.__init__(self, **kwargs)
+        observation_space = Box(low=-np.inf, high=np.inf, shape=(4,), dtype=np.float64)
+        MuJocoPyEnv.__init__(
+            self,
+            model_path=os.path.join("..", "model", "GripperGPT.xml"),
+            frame_skip=1,
+            observation_space=observation_space,
+            **kwargs
+        )
 
         self.step_count = 0
         self.max_steps = 100
         
-        # load xml model
-        model_path = os.path.join("../model", "GripperGPT.xml")
-        self.model = mujoco.MjModel.from_xml_path(model_path)
-        self.data = mujoco.MjData(self.model)
+        # # load xml model
+        # model_path = os.path.join("../model", "GripperGPT.xml")
+        # self.model = mujoco.MjModel.from_xml_path(model_path)
+        # self.data = mujoco.MjData(self.model)
         
         # actuator ids
         self.updown = self.model.actuator("up/down").id
@@ -69,13 +92,16 @@ class GripperEnv(gym.Env):
         truncated = self.step_count >= self.max_steps
         info = {"distance": dist}
 
+        if self.render_mode == "human":
+            self.render()
+
         return obs, reward, terminated, truncated, info
 
-    def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
-
+    def reset_model(self):
+        """Reset the robot degrees of freedom (qpos and qvel) and randomize block/target positions."""
         self.step_count = 0
-        mujoco.mj_resetData(self.model, self.data)
+        # Note: _reset_simulation() is already called by base class reset()
+        # So we just need to randomize positions and forward the physics
         rand_spawn(self.model, self.data)  # randomize block/target
         mujoco.mj_forward(self.model, self.data)  # propagate physics
 
@@ -83,4 +109,12 @@ class GripperEnv(gym.Env):
         gripper_xy = self.data.xpos[self.gripper][:2]
         obs = np.concatenate([block_xy, gripper_xy])
 
-        return obs, {}
+        return obs
+    
+    def _get_obs(self):
+        return np.concatenate([self.data.qpos, self.data.qvel]).ravel()
+
+    def viewer_setup(self):
+        assert self.viewer is not None
+        self.viewer.cam.trackbodyid = 0
+        self.viewer.cam.distance = self.model.stat.extent
