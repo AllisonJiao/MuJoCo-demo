@@ -15,6 +15,12 @@ except ImportError as e:
 else:
     MUJOCO_IMPORT_ERROR = None
 
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
+
 
 # NOTE: duplication of analogous code in mujoco_env.py
 # Support for mujoco-py based envs is deprecated, so this module will no longer be maintained
@@ -277,16 +283,22 @@ class MuJocoPyEnv(BaseMujocoPyEnv):
             camera_id = -1  # Use default camera
 
         # Update renderer with current state
-        self._renderer.update_scene(self.data, camera_id=camera_id)
+        self._renderer.update_scene(self.data)
+        # Set camera if specified
+        if camera_id >= 0:
+            self._renderer.scene.camera.fixedcamid = camera_id
 
         if self.render_mode == "human":
-            # For human mode, we use mujoco.viewer which is interactive
-            # This is a simplified version - for full interactive viewing,
-            # you'd need to use mujoco.viewer.launch_passive() in a separate thread/context
-            if self.viewer is None:
-                # Note: mujoco.viewer is blocking, so this is a simplified implementation
-                # For training, you might want to disable human rendering or use a different approach
-                pass
+            # For human mode, render and display frames using OpenCV
+            frame = self._renderer.render()
+            # Display using OpenCV if available (non-blocking)
+            if CV2_AVAILABLE:
+                # Convert RGB to BGR for OpenCV
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                cv2.imshow("MuJoCo Training", frame_bgr)
+                cv2.waitKey(1)  # Non-blocking wait (1ms)
+            else:
+                print("Warning: OpenCV not available. Install with: pip install opencv-python")
         elif self.render_mode == "rgb_array":
             return self._renderer.render()
         elif self.render_mode == "depth_array":
@@ -299,6 +311,8 @@ class MuJocoPyEnv(BaseMujocoPyEnv):
         if self.viewer is not None:
             self.viewer = None
             self._viewers = {}
+        if CV2_AVAILABLE and self.render_mode == "human":
+            cv2.destroyAllWindows()
 
     def viewer_setup(self):
         """
