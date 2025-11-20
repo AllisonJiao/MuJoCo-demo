@@ -1,2 +1,12 @@
 .DS_Store
 *.pyc
+
+# Checkpoints and model files
+gripper_mj/checkpoints/
+**/checkpoints/
+# Model checkpoint files
+*_model_*.zip
+*_model_*.pt
+*_model.zip
+*_model.pt
+*_vec_normalize.pkl
