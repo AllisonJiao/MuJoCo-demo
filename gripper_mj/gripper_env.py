@@ -10,6 +10,11 @@ import numpy as np
 import mujoco
 from gripper_controller import rand_spawn
 
+BLOCK_DIMENSION = 0.05
+SUCCESS_THRESHOLD = 1.0 * BLOCK_DIMENSION
+MAX_STEPS = 500
+MIN_ABOVE = 0.2
+
 """
 Goal: Move gripper on top of the block (don't care about y coordinate)
 State: Coordinate of Gripper, Coordinate of Block
@@ -40,7 +45,7 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         )
 
         self.step_count = 0
-        self.max_steps = 100
+        self.max_steps = MAX_STEPS
         
         # # load xml model
         # model_path = os.path.join("../model", "GripperGPT.xml")
@@ -86,8 +91,8 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         dist = np.linalg.norm(gripper_xy - block_xy)
 
         reward = -dist
-        terminated = dist <= 0.05   # success threshold
-        if dist <= 0.05:
+        terminated = dist <= SUCCESS_THRESHOLD   # success threshold
+        if terminated:
             reward += 1
         truncated = self.step_count >= self.max_steps
         info = {"distance": dist}

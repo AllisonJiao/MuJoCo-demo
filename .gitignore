@@ -3,6 +3,8 @@
 
 # Checkpoints and model files
 gripper_mj/checkpoints/
+gripper_mj/videos/
+gripper_mj/test/
 **/checkpoints/
 # Model checkpoint files
 *_model_*.zip
