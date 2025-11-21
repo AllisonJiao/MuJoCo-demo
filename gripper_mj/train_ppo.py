@@ -7,6 +7,7 @@ import os
 import argparse
 import cv2
 from gripper_env import GripperEnv, MAX_STEPS  # your env
+from gripper_grasp_env import GripperGraspEnv  # Env B: grasp-only
 
 TRAIN_EPS = 100000
 VALID_EPS = 100
@@ -24,9 +25,20 @@ RENDER_MODE = os.getenv("RENDER_MODE", None)  # Set RENDER_MODE=human to enable 
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 def make():
-    if RENDER_MODE:
-        return GripperEnv(render_mode=RENDER_MODE)
-    return GripperEnv()
+    """Create environment - can be Env A (positioning) or Env B (grasping)"""
+    env_type = os.getenv("ENV_TYPE", "position")  # "position" or "grasp"
+    allow_xy = os.getenv("ALLOW_XY_ADJUST", "false").lower() == "true"
+    
+    if env_type == "grasp":
+        # Env B: Grasp-only environment
+        if RENDER_MODE:
+            return GripperGraspEnv(allow_xy_adjust=allow_xy, render_mode=RENDER_MODE)
+        return GripperGraspEnv(allow_xy_adjust=allow_xy)
+    else:
+        # Env A: Positioning environment (default)
+        if RENDER_MODE:
+            return GripperEnv(render_mode=RENDER_MODE)
+        return GripperEnv()
 
 # Custom callback to save PyTorch .pt checkpoints
 class PyTorchCheckpointCallback(BaseCallback):
@@ -119,9 +131,29 @@ if __name__ == "__main__":
         print("Eval-only mode: skipping training")
 
 
+    # Determine environment type for validation
+    env_type = os.getenv("ENV_TYPE", "position")
+    allow_xy = os.getenv("ALLOW_XY_ADJUST", "false").lower() == "true"
+    
     validation_render_mode = "rgb_array" if args.render_video else RENDER_MODE
     video_width, video_height = (1280, 720) if args.render_video else (480, 480)
-    env = GripperEnv(render_mode=validation_render_mode, width=video_width, height=video_height)
+    
+    # Create appropriate environment for validation
+    if env_type == "grasp":
+        from gripper_grasp_env import GripperGraspEnv
+        env = GripperGraspEnv(
+            allow_xy_adjust=allow_xy,
+            render_mode=validation_render_mode,
+            width=video_width,
+            height=video_height
+        )
+    else:
+        env = GripperEnv(
+            render_mode=validation_render_mode,
+            width=video_width,
+            height=video_height
+        )
+    
     obs, info = env.reset(seed=123)
     total_r, successes = 0.0, 0
 
@@ -174,11 +206,24 @@ if __name__ == "__main__":
                     frames.append(frame)
 
             if term or trunc:
-                successes += int(term)
+                # For grasping env, success is when grasped
+                if env_type == "grasp":
+                    successes += int(info.get("grasped", False))
+                else:
+                    successes += int(term)
                 obs, info = env.reset()
                 break
 
-        print("Eval {}: total_reward: {:.2f}, ep_length: {}, successes: {}".format(i, total_r_inner, ep_length, success))
+        # Print episode result with appropriate info
+        if env_type == "grasp":
+            grasped = info.get("grasped", False)
+            print("Eval {}: total_reward: {:.2f}, ep_length: {}, grasped: {}, vertical_dist: {:.3f}".format(
+                i, total_r_inner, ep_length, grasped, info.get("vertical_dist", 0)
+            ))
+        else:
+            print("Eval {}: total_reward: {:.2f}, ep_length: {}, successes: {}".format(
+                i, total_r_inner, ep_length, success
+            ))
 
         # Save video if frames were collected
         if args.render_video and len(frames) > 0:
