@@ -11,7 +11,7 @@ import mujoco
 from gripper_controller import rand_spawn
 
 BLOCK_DIMENSION = 0.05
-SUCCESS_THRESHOLD = 1.0 * BLOCK_DIMENSION
+SUCCESS_THRESHOLD = 0.2 * BLOCK_DIMENSION
 MAX_STEPS = 500
 MIN_ABOVE = 0.2
 
@@ -82,13 +82,22 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         # advance physics
         for i in range(1,10):
             mujoco.mj_step(self.model, self.data)
-
+        '''
+        block_xyz   = self.data.xpos[self.body][:3]
+        gripper_xyz = self.data.xpos[self.gripper][:3]
+        obs = np.concatenate([block_xyz, gripper_xyz])
+        
+        target_pos = block_xyz.copy()
+        target_pos[2] += MIN_ABOVE
+        # distance between block and gripper
+        dist = np.linalg.norm(gripper_xyz - target_pos)
+        '''
         block_xy   = self.data.xpos[self.body][:2]
         gripper_xy = self.data.xpos[self.gripper][:2]
         obs = np.concatenate([block_xy, gripper_xy])
         
         # distance between block and gripper
-        dist = np.linalg.norm(gripper_xy - block_xy)
+        dist = np.linalg.norm(block_xy - gripper_xy)
 
         reward = -dist
         terminated = dist <= SUCCESS_THRESHOLD   # success threshold

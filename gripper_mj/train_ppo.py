@@ -5,6 +5,7 @@ from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 import torch
 import os
 import argparse
+import cv2
 from gripper_env import GripperEnv, MAX_STEPS  # your env
 
 TRAIN_EPS = 100000
@@ -173,6 +174,22 @@ if __name__ == "__main__":
                 break
 
         print("Eval {}: total_reward: {:.2f}, ep_length: {}, successes: {}".format(i, total_r_inner, ep_length, success))
+
+        # Save video if frames were collected
+        if args.render_video and len(frames) > 0:
+            video_path = os.path.join(VIDEO_DIR, f"validation_ep_{i:03d}.mp4")
+            # Get frame dimensions from first frame
+            h, w = frames[0].shape[:2]
+            # Create video writer
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(video_path, fourcc, 30.0, (w, h))
+            
+            for frame in frames:
+                # Convert RGB to BGR for OpenCV
+                bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                out.write(bgr_frame)
+            out.release()
+            print(f"Saved video to {video_path}")
 
     print("mean_reward:", total_r / VALID_EPS, "successes:", successes)
 
