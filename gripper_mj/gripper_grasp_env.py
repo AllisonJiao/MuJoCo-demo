@@ -40,8 +40,8 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         """
         utils.EzPickle.__init__(self, allow_xy_adjust=allow_xy_adjust, **kwargs)
         
-        # Observation: vertical distance, finger state, contact info, maybe XY error
-        obs_dim = 6 if allow_xy_adjust else 4
+        # Observation: vertical distance, finger state, contact info, ground contact, maybe XY error
+        obs_dim = 7 if allow_xy_adjust else 5  # Added ground contact
         observation_space = Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float64)
         
         MuJocoPyEnv.__init__(
@@ -68,6 +68,15 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         self.gripper = self.model.body("gripper").id
         self.left_finger = self.model.body("left_finger").id
         self.right_finger = self.model.body("right_finger").id
+        
+        # Find ground/floor body (geom named "floor")
+        try:
+            floor_geom_id = self.model.geom("floor").id
+            # Get the body ID for this geom
+            self.floor_body = self.model.geom_bodyid[floor_geom_id]
+        except:
+            # Fallback: assume body 0 is the world/ground
+            self.floor_body = 0
 
         # Action space: [up/down, finger] or [up/down, xy_adjust_x, xy_adjust_y, finger]
         if allow_xy_adjust:
@@ -83,17 +92,29 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         )
         
         # Finger control range
-        self.finger_open = 0.0
+        # Start with fingers more open (like gripper raised higher in position stage)
+        self.finger_open = -0.05  # More open (negative = more open based on joint range)
         self.finger_close = 3.0
         
         # Initial height above block (will be set in reset)
         self.initial_height = GRASP_HEIGHT_ABOVE
 
     def _check_grasped(self) -> bool:
-        """Check if block is grasped by detecting contact between fingers and block."""
-        # Check for contacts between block and fingers
+        """
+        Check if block is successfully grasped.
+        
+        Success condition: Gripper must touch BOTH the ground AND the block at the same time.
+        This ensures the gripper has descended enough to grasp the block on the ground.
+        
+        Returns True if:
+        - Fingers are in contact with block (both fingers preferred)
+        - Gripper/block is in contact with ground
+        """
+        # Check for contacts
+        block_finger_contact = False
         left_finger_contact = False
         right_finger_contact = False
+        ground_contact = False
         
         for i in range(self.data.ncon):
             contact = self.data.contact[i]
@@ -104,34 +125,50 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             body1 = self.model.geom_bodyid[geom1]
             body2 = self.model.geom_bodyid[geom2]
             
-            # Check if contact involves block and a finger
+            # Check for finger-block contact
             if body1 == self.body:
                 if body2 == self.left_finger:
                     left_finger_contact = True
+                    block_finger_contact = True
                 elif body2 == self.right_finger:
                     right_finger_contact = True
+                    block_finger_contact = True
             elif body2 == self.body:
                 if body1 == self.left_finger:
                     left_finger_contact = True
+                    block_finger_contact = True
                 elif body1 == self.right_finger:
                     right_finger_contact = True
+                    block_finger_contact = True
+            
+            # Check for ground contact (block or gripper/fingers touching ground)
+            if body1 == self.floor_body:
+                if body2 in [self.body, self.gripper, self.left_finger, self.right_finger]:
+                    ground_contact = True
+            elif body2 == self.floor_body:
+                if body1 in [self.body, self.gripper, self.left_finger, self.right_finger]:
+                    ground_contact = True
         
-        # Consider grasped if both fingers are in contact with block
-        if left_finger_contact and right_finger_contact:
+        # Success: must have both block contact AND ground contact
+        # Prefer both fingers contacting block, but accept at least one
+        if block_finger_contact and ground_contact:
             return True
         
-        # Fallback: check finger joint position and proximity
-        left_slide_joint_id = self.model.joint("left_slide").id
-        if left_slide_joint_id < len(self.data.qpos):
-            finger_position = self.data.qpos[left_slide_joint_id]
-            fingers_closed = finger_position > 0.05
-            
-            block_xy = self.data.xpos[self.body][:2]
-            gripper_xy = self.data.xpos[self.gripper][:2]
-            dist = np.linalg.norm(block_xy - gripper_xy)
-            
-            if fingers_closed and dist <= 0.5 * SUCCESS_THRESHOLD:
-                return True
+        # Fallback: check if block is very close to ground and fingers are closed
+        block_xyz = self.data.xpos[self.body][:3]
+        if block_xyz[2] <= 0.06:  # Block is near ground (block height ~0.05)
+            left_slide_joint_id = self.model.joint("left_slide").id
+            if left_slide_joint_id < len(self.data.qpos):
+                finger_position = self.data.qpos[left_slide_joint_id]
+                fingers_closed = finger_position > 0.05
+                
+                block_xy = self.data.xpos[self.body][:2]
+                gripper_xy = self.data.xpos[self.gripper][:2]
+                dist = np.linalg.norm(block_xy - gripper_xy)
+                
+                # Block on ground, fingers closed, and close to block
+                if fingers_closed and dist <= 0.5 * SUCCESS_THRESHOLD and ground_contact:
+                    return True
         
         return False
 
@@ -186,13 +223,29 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         # Check if grasped
         grasped = self._check_grasped()
         
+        # Check ground contact for observation
+        ground_contact_obs = False
+        for i in range(self.data.ncon):
+            contact = self.data.contact[i]
+            geom1 = contact.geom1
+            geom2 = contact.geom2
+            body1 = self.model.geom_bodyid[geom1]
+            body2 = self.model.geom_bodyid[geom2]
+            if body1 == self.floor_body:
+                if body2 in [self.body, self.gripper, self.left_finger, self.right_finger]:
+                    ground_contact_obs = True
+            elif body2 == self.floor_body:
+                if body1 in [self.body, self.gripper, self.left_finger, self.right_finger]:
+                    ground_contact_obs = True
+        
         # Build observation
         if self.allow_xy_adjust:
             obs = np.array([
                 vertical_dist,           # Height above block
                 horizontal_dist,         # XY alignment error
                 finger_state,           # Finger opening/closing state
-                float(grasped),         # Contact indicator
+                float(grasped),         # Block contact indicator
+                float(ground_contact_obs),  # Ground contact indicator
                 gripper_xyz[2],         # Absolute gripper height
                 block_xyz[2],           # Block height
             ], dtype=np.float32)
@@ -200,31 +253,70 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             obs = np.array([
                 vertical_dist,           # Height above block
                 finger_state,           # Finger opening/closing state
-                float(grasped),         # Contact indicator
+                float(grasped),         # Block contact indicator
+                float(ground_contact_obs),  # Ground contact indicator
                 gripper_xyz[2],         # Absolute gripper height
             ], dtype=np.float32)
 
         # Reward: only about grasping
         reward = 0.0
         
+        # Get ground contact status
+        ground_contact = False
+        for i in range(self.data.ncon):
+            contact = self.data.contact[i]
+            geom1 = contact.geom1
+            geom2 = contact.geom2
+            body1 = self.model.geom_bodyid[geom1]
+            body2 = self.model.geom_bodyid[geom2]
+            if body1 == self.floor_body:
+                if body2 in [self.body, self.gripper, self.left_finger, self.right_finger]:
+                    ground_contact = True
+            elif body2 == self.floor_body:
+                if body1 in [self.body, self.gripper, self.left_finger, self.right_finger]:
+                    ground_contact = True
+        
+        # Get absolute heights
+        gripper_height = gripper_xyz[2]
+        block_height = block_xyz[2]
+        ground_height = 0.0
+        
         # Small penalty for being too high (encourages descent)
         if vertical_dist > 0.15:
             reward -= 0.1
         
-        # Reward for being at good grasping height (0.02 to 0.08 above block)
-        if 0.02 <= vertical_dist <= 0.08:
-            reward += 1.0
+        # Reward for descending closer to ground (especially important for grasping)
+        # Reward getting block closer to ground
+        if block_height < 0.06:  # Block is near ground
+            reward += 2.0 * (0.06 - block_height) / 0.06  # More reward the closer to ground
+        
+        # Reward for gripper being close to ground when grasping
+        if gripper_height < 0.1:  # Gripper is low
+            reward += 1.0 * (0.1 - gripper_height) / 0.1
+        
+        # Reward for ground contact (critical for success)
+        if ground_contact:
+            reward += 3.0  # Strong reward for touching ground
+        
+        # Reward for being at good grasping height (0.01 to 0.05 above block - lower range)
+        # This encourages getting closer to the ground
+        if 0.01 <= vertical_dist <= 0.05:
+            reward += 1.5
             
             # Reward closing fingers when at good height
             finger_closing = max(0, finger_state)
             reward += finger_closing * 2.0
+            
+            # Extra reward if also touching ground
+            if ground_contact:
+                reward += 2.0
         
-        # Large reward for successful grasp
+        # Large reward for successful grasp (requires both block and ground contact)
         if grasped:
-            reward += 10.0
+            reward += 15.0  # Increased from 10.0
         
-        # Small penalty for being too low (below block)
-        if vertical_dist < 0:
+        # Small penalty for being too low (below block) - but only if not touching ground
+        if vertical_dist < 0 and not ground_contact:
             reward -= 0.5
         
         # Small penalty for horizontal misalignment (if allowed)
@@ -238,11 +330,29 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         terminated = grasped
         truncated = self.step_count >= self.max_steps
         
+        # Get ground contact for info (reuse from reward calculation)
+        ground_contact_info = False
+        for i in range(self.data.ncon):
+            contact = self.data.contact[i]
+            geom1 = contact.geom1
+            geom2 = contact.geom2
+            body1 = self.model.geom_bodyid[geom1]
+            body2 = self.model.geom_bodyid[geom2]
+            if body1 == self.floor_body:
+                if body2 in [self.body, self.gripper, self.left_finger, self.right_finger]:
+                    ground_contact_info = True
+            elif body2 == self.floor_body:
+                if body1 in [self.body, self.gripper, self.left_finger, self.right_finger]:
+                    ground_contact_info = True
+        
         info = {
             "grasped": grasped,
             "vertical_dist": vertical_dist,
             "horizontal_dist": horizontal_dist,
             "finger_state": finger_state,
+            "ground_contact": ground_contact_info,
+            "block_height": block_xyz[2],
+            "gripper_height": gripper_xyz[2],
         }
 
         if self.render_mode == "human":
@@ -294,12 +404,16 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         finger_state = self.data.qpos[finger_adr]
         grasped = False
         
+        # Check ground contact for observation (at reset, should be False)
+        ground_contact_obs = False
+        
         if self.allow_xy_adjust:
             obs = np.array([
                 vertical_dist,
                 horizontal_dist,
                 finger_state,
                 float(grasped),
+                float(ground_contact_obs),
                 gripper_xyz[2],
                 block_xyz[2],
             ], dtype=np.float32)
@@ -308,6 +422,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
                 vertical_dist,
                 finger_state,
                 float(grasped),
+                float(ground_contact_obs),
                 gripper_xyz[2],
             ], dtype=np.float32)
         
@@ -327,12 +442,28 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         finger_state = self.data.qpos[left_slide_joint_id] if left_slide_joint_id < len(self.data.qpos) else 0.0
         grasped = self._check_grasped()
         
+        # Check ground contact for observation
+        ground_contact_obs = False
+        for i in range(self.data.ncon):
+            contact = self.data.contact[i]
+            geom1 = contact.geom1
+            geom2 = contact.geom2
+            body1 = self.model.geom_bodyid[geom1]
+            body2 = self.model.geom_bodyid[geom2]
+            if body1 == self.floor_body:
+                if body2 in [self.body, self.gripper, self.left_finger, self.right_finger]:
+                    ground_contact_obs = True
+            elif body2 == self.floor_body:
+                if body1 in [self.body, self.gripper, self.left_finger, self.right_finger]:
+                    ground_contact_obs = True
+        
         if self.allow_xy_adjust:
             return np.array([
                 vertical_dist,
                 horizontal_dist,
                 finger_state,
                 float(grasped),
+                float(ground_contact_obs),
                 gripper_xyz[2],
                 block_xyz[2],
             ], dtype=np.float32)
@@ -341,6 +472,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
                 vertical_dist,
                 finger_state,
                 float(grasped),
+                float(ground_contact_obs),
                 gripper_xyz[2],
             ], dtype=np.float32)
 
