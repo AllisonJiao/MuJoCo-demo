@@ -154,8 +154,13 @@ if __name__ == "__main__":
         success = False
         frames = []
 
-        for _ in range(VALID_MAX_STEPS):
+        for step_idx in range(VALID_MAX_STEPS):
             action, _ = model.predict(obs, deterministic=(not args.stochastic))
+            
+            # Debug: print action occasionally to see if it's changing
+            # if step_idx % 10 == 0:
+            #     print(f"  Step {step_idx}: action={action}, obs={obs}")
+            
             obs, r, term, trunc, info = env.step(action)
             total_r += r
             total_r_inner += r
