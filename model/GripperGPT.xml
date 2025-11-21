@@ -2,6 +2,10 @@
     <compiler angle="degree" coordinate="local"/>
     <option gravity="0 0 -9.81" integrator="RK4"/>
 
+    <visual>
+        <global offwidth="1280" offheight="720"/>
+    </visual>
+
     <worldbody>
         <!-- Ground -->
         <geom name="floor" type="plane" pos="0 0 0" size="5 5 0.1" rgba="0.9 0.9 0.9 1"/>
