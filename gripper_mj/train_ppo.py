@@ -9,7 +9,7 @@ import cv2
 from gripper_env import GripperEnv, MAX_STEPS  # your env
 
 TRAIN_EPS = 100000
-VALID_EPS = 10
+VALID_EPS = 100
 VALID_MAX_STEPS = MAX_STEPS
 
 # Checkpoint configuration

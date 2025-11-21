@@ -35,7 +35,7 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
 
     def __init__(self, **kwargs):
         utils.EzPickle.__init__(self, **kwargs)
-        observation_space = Box(low=-np.inf, high=np.inf, shape=(6,), dtype=np.float64)
+        observation_space = Box(low=-np.inf, high=np.inf, shape=(8,), dtype=np.float64)
         MuJocoPyEnv.__init__(
             self,
             model_path=os.path.join("..", "model", "GripperGPT.xml"),
@@ -64,12 +64,14 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         self.target = self.model.body("target").id
         self.gripper = self.model.body("gripper").id
 
-        # action = 3 motors, obs = [relative_pos(2), gripper_xy(2), gripper_vel(2)] = 6D
+        # action = 3 motors, obs = [relative_pos(2), dist_x, dist_y, gripper_xy(2), gripper_vel(2)] = 8D
         self.action_space = spaces.Box(low=-1, high=1, shape=(3,), dtype=np.float32)
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(6,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(8,), dtype=np.float32)
 
         # in __init__
         self.ctrl_scale = np.array([15.0, 10.0, 10.0], dtype=float)  # [up/down, left/right, forward/back]
+        # Fixed upward lift to avoid collision with block (adjust this value as needed)
+        self.fixed_updown_lift = 5.0  # Positive value lifts gripper up
 
 
     def step(self, action):
@@ -78,7 +80,9 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         action *= self.ctrl_scale
         
         # Apply actions to actuators
-        self.data.ctrl[self.updown] = action[0]
+        # Set fixed upward lift for up/down to avoid collision with block
+        self.data.ctrl[self.updown] = self.fixed_updown_lift
+        # Left/right and forward/back are controlled by actions
         self.data.ctrl[self.leftright] = action[1]
         self.data.ctrl[self.forwardback] = action[2]
 
@@ -101,11 +105,14 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         
         # Use relative position (more informative for learning direction)
         relative_pos = block_xy - gripper_xy
+        # Distance components (x and y separately)
+        dist_x = relative_pos[0]
+        dist_y = relative_pos[1]
         # Include velocity to help model understand movement
         gripper_vel = self.data.qvel[:2] if len(self.data.qvel) >= 2 else np.array([0.0, 0.0])
         
-        # Observation: [relative_x, relative_y, gripper_x, gripper_y, gripper_vel_x, gripper_vel_y]
-        obs = np.concatenate([relative_pos, gripper_xy, gripper_vel[:2]])
+        # Observation: [relative_x, relative_y, dist_x, dist_y, gripper_x, gripper_y, gripper_vel_x, gripper_vel_y]
+        obs = np.concatenate([relative_pos, np.array([dist_x, dist_y]), gripper_xy, gripper_vel[:2]])
         
         # distance between block and gripper
         dist = np.linalg.norm(block_xy - gripper_xy)
@@ -155,8 +162,11 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         
         # Use relative position and velocity (consistent with step())
         relative_pos = block_xy - gripper_xy
+        # Distance components (x and y separately)
+        dist_x = relative_pos[0]
+        dist_y = relative_pos[1]
         gripper_vel = self.data.qvel[:2] if len(self.data.qvel) >= 2 else np.array([0.0, 0.0])
-        obs = np.concatenate([relative_pos, gripper_xy, gripper_vel[:2]])
+        obs = np.concatenate([relative_pos, np.array([dist_x, dist_y]), gripper_xy, gripper_vel[:2]])
 
         return obs
     
