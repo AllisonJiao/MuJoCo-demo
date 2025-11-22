@@ -32,7 +32,7 @@ def rand_spawn(m, d):
     d.qpos[target_adr:target_adr+3] = [
         np.random.uniform(-0.5, 0.5),   # x
         np.random.uniform(-0.5, 0.5),   # y
-        0.05                            # z
+        0.001                           # z
     ]
     # Set orientation quaternion (w, x, y, z) = identity
     d.qpos[target_adr+3:target_adr+7] = [1, 0, 0, 0]

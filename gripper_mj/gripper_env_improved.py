@@ -116,21 +116,23 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         if len(self.action_history) > self.action_history_size:
             self.action_history.pop(0)
         
+        # Capture previous smoothed action (if any) before applying smoothing
+        prev_action_before = self.prev_action.copy() if (hasattr(self, 'prev_action') and self.prev_action is not None) else None
+
         # Action smoothing for deterministic policy (reduces oscillations)
-        if self.prev_action is not None:
-            action_clipped = self.action_ema_alpha * action_clipped + (1 - self.action_ema_alpha) * self.prev_action
-        self.prev_action = action_clipped.copy()
+        if prev_action_before is not None:
+            action_clipped = self.action_ema_alpha * action_clipped + (1 - self.action_ema_alpha) * prev_action_before
         
         # Adaptive action scaling: reduce action magnitude when close to target
         # This helps prevent vibrations near equilibrium
         # Use previous step's distance for preview
         horizontal_dist_preview = self.prev_horizontal_dist if self.prev_horizontal_dist is not None else 1.0
-        
+        '''
         # Reduce action scale when close (helps with convergence)
         if horizontal_dist_preview < 0.1:  # Within 10cm
             action_scale_factor = 0.3 + 0.7 * (horizontal_dist_preview / 0.1)  # Scale from 0.3 to 1.0
             action_clipped = action_clipped * action_scale_factor
-        
+        '''
         scaled_action = action_clipped * self.ctrl_scale
         
         # Apply actions to actuators
@@ -254,10 +256,23 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
             else:
                 progress_reward = horizontal_progress * 8.0  # Moderate when close
         
-        # 5. Action penalty (encourages smooth, small actions)
-        # Stronger penalty when close to encourage convergence
-        action_penalty_weight = 0.02 if horizontal_dist < 0.05 else 0.01
-        action_penalty = -action_penalty_weight * float(np.sum(action_clipped ** 2))
+        # 5. Action-change penalty: penalize drastic changes in the commanded target
+        # Since actuators are position targets (not forces), penalizing absolute magnitude is
+        # less appropriate than penalizing sudden changes (which cause oscillation).
+        # Compute delta relative to previous smoothed action (prev_action_before captured earlier)
+        if prev_action_before is None:
+            action_delta = np.zeros_like(action_clipped)
+        else:
+            action_delta = action_clipped - prev_action_before
+
+        # Now update stored smoothed action for next step
+        self.prev_action = action_clipped.copy()
+
+        if len(action_delta) >=3:
+            action_delta = action_delta[1:]  # Only horizontal components when up/down enabled
+        # Stronger penalty when close to target to encourage settling
+        action_penalty_weight = 100. * max(0.0, 1.0 - horizontal_dist / (SUCCESS_THRESHOLD * 10.))
+        action_penalty = -action_penalty_weight * float(np.linalg.norm(action_delta))
         
         # 6. Precision bonus (heavily rewards being very close)
         precision_bonus = 0.0
@@ -303,6 +318,7 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
             "precision_bonus": precision_bonus,
             "success_bonus": success_bonus,
             "action_penalty": action_penalty,
+            "action_delta": action_delta.tolist(),
         }
 
         if self.render_mode == "human":

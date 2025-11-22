@@ -193,7 +193,7 @@ for i in range(VALID_EPS):
         ep_length += 1
         success = term
         
-        if log_this_ep and step < 20:
+        if log_this_ep and step % 10 == 0:
             print(f"  Step {step}: action={action} horiz_dist={info.get('horizontal_dist', 0.0):.4f} "
                   f"dz={info.get('dz', 0.0):.4f} reward={r:.4f}")
 
