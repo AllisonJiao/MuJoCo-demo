@@ -7,17 +7,18 @@
     </visual>
 
     <worldbody>
+        <light pos="0 0 1.5" type="directional" dir="0 0 -1" diffuse="0.1 0.1 0.1" ambient="0.1 0.1 0.1" specular="0.1 0.1 0.1"/>
         <!-- Ground -->
         <geom name="floor" type="plane" pos="0 0 0" size="5 5 0.1" rgba="0.9 0.9 0.9 1"/>
 
         <!-- Block -->
-        <body name="block" pos="0 0 0.05">
+        <body name="block" pos="0.0 0.0 0.05">
             <joint type="free" name="block_free"/>
             <geom type="box" size="0.05 0.05 0.05" rgba="0.2 0.6 0.9 1" mass="0.1" friction = "2.0"/>
         </body>
 
         <!-- Target -->
-        <body name="target" pos="0 0 0.05">
+        <body name="target" pos="0 0 0.001">
             <joint type="free" name="target_free"/>
             <geom type="box" size="0.1 0.1 0.001" rgba="0 1 0 1" mass="0.1" friction = "2.0"/>
         </body>
