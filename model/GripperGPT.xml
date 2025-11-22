@@ -56,8 +56,8 @@
 
     <actuator>
         <motor name = "up/down" joint="gripper_updown" ctrlrange="-15 15" ctrllimited="true"/>
-        <motor name = "left/right" joint="gripper_leftright" ctrlrange="-10 10" ctrllimited="true"/>
-        <motor name = "forward/backward" joint="gripper_forwardbackward" ctrlrange="-10 10" ctrllimited="true"/>
+        <motor name = "left/right" joint="gripper_leftright" ctrlrange="-15 15" ctrllimited="true"/>
+        <motor name = "forward/backward" joint="gripper_forwardbackward" ctrlrange="-15 15" ctrllimited="true"/>
 
         <motor name = "finger" joint="left_slide" ctrlrange="-2 5" ctrllimited="true"/>
     </actuator>

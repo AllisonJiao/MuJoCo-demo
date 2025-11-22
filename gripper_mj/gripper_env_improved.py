@@ -14,8 +14,8 @@ BLOCK_DIMENSION = 0.05
 SUCCESS_THRESHOLD = 0.15 * BLOCK_DIMENSION  # Slightly more lenient for deterministic policy
 MAX_STEPS = 500
 # Height constraint (meters) — gripper should hang at least this far above block
-MIN_ABOVE = 0.02  # ~2 cm above block
-TARGET_HEIGHT = 0.05  # Target height above block (5 cm)
+MIN_ABOVE = 0.2  # ~2 cm above block
+TARGET_HEIGHT = BLOCK_DIMENSION + MIN_ABOVE  # Target height above block (5 cm)
 
 """
 Improved GripperEnv with better reward shaping for deterministic precision and learnable up/down control.
@@ -85,9 +85,9 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         # Control scaling: smaller for up/down to encourage fine control
         # Horizontal axes can be larger for faster movement
         if enable_updown_control:
-            self.ctrl_scale = np.array([5.0, 8.0, 8.0], dtype=float)  # [up/down, left/right, forward/back]
+            self.ctrl_scale = np.array([15, 15, 15], dtype=float)  # [up/down, left/right, forward/back]
         else:
-            self.ctrl_scale = np.array([8.0, 8.0], dtype=float)  # [left/right, forward/back]
+            self.ctrl_scale = np.array([15, 15], dtype=float)  # [left/right, forward/back]
             self.fixed_updown_lift = 5.0  # Fixed upward lift when up/down is disabled
         
         # Reward shaping parameters
