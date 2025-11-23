@@ -14,7 +14,7 @@ BLOCK_DIMENSION = 0.05
 SUCCESS_THRESHOLD = 0.15 * BLOCK_DIMENSION  # Slightly more lenient for deterministic policy
 MAX_STEPS = 500
 # Height constraint (meters) — gripper should hang at least this far above block
-MIN_ABOVE = 0.2  # ~2 cm above block
+MIN_ABOVE = 0.2  # ~20 cm above block
 TARGET_HEIGHT = BLOCK_DIMENSION + MIN_ABOVE  # Target height above block (5 cm)
 
 """
@@ -85,10 +85,10 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         # Control scaling: smaller for up/down to encourage fine control
         # Horizontal axes can be larger for faster movement
         if enable_updown_control:
-            self.ctrl_scale = np.array([15, 15, 15], dtype=float)  # [up/down, left/right, forward/back]
+            self.ctrl_scale = np.array([1, 1, 1], dtype=float)  # [up/down, left/right, forward/back]
         else:
-            self.ctrl_scale = np.array([15, 15], dtype=float)  # [left/right, forward/back]
-            self.fixed_updown_lift = 5.0  # Fixed upward lift when up/down is disabled
+            self.ctrl_scale = np.array([1, 1], dtype=float)  # [left/right, forward/back]
+            self.fixed_updown_lift = 1.0  # Fixed upward lift when up/down is disabled
         
         # Reward shaping parameters
         self.gamma = 0.99
@@ -110,29 +110,6 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         
         # Clip and scale action
         action_clipped = np.clip(action, -1, 1)
-        
-        # Store action for drift detection
-        self.action_history.append(action_clipped.copy())
-        if len(self.action_history) > self.action_history_size:
-            self.action_history.pop(0)
-        
-        # Capture previous smoothed action (if any) before applying smoothing
-        prev_action_before = self.prev_action.copy() if (hasattr(self, 'prev_action') and self.prev_action is not None) else None
-
-        # Action smoothing for deterministic policy (reduces oscillations)
-        if prev_action_before is not None:
-            action_clipped = self.action_ema_alpha * action_clipped + (1 - self.action_ema_alpha) * prev_action_before
-        
-        # Adaptive action scaling: reduce action magnitude when close to target
-        # This helps prevent vibrations near equilibrium
-        # Use previous step's distance for preview
-        horizontal_dist_preview = self.prev_horizontal_dist if self.prev_horizontal_dist is not None else 1.0
-        '''
-        # Reduce action scale when close (helps with convergence)
-        if horizontal_dist_preview < 0.1:  # Within 10cm
-            action_scale_factor = 0.3 + 0.7 * (horizontal_dist_preview / 0.1)  # Scale from 0.3 to 1.0
-            action_clipped = action_clipped * action_scale_factor
-        '''
         scaled_action = action_clipped * self.ctrl_scale
         
         # Apply actions to actuators
@@ -163,11 +140,13 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         # Vertical offset (positive = gripper above block)
         dz = float(gripper_pos[2] - block_pos[2])
         
-        # Get velocities for observation
-        gripper_vel = self.data.qvel[:2] if len(self.data.qvel) >= 2 else np.array([0.0, 0.0])
+        # Get gripper linear velocity (world frame) for observation — use body xvel instead of joint qvel
+        try:
+            gripper_lin = self.data.xvel[self.gripper]
+            gripper_vel = np.array(gripper_lin[:2], dtype=float)
+        except Exception:
+            gripper_vel = np.array([0.0, 0.0], dtype=float)
         
-        # Observation: [rel_dx, rel_dy, rel_dz, gripper_z, horizontal_dist, vertical_dist, gripper_vel_x, gripper_vel_y]
-        # Normalize relative positions by a typical scale (0.5m) for better learning
         obs = np.concatenate([
             rel / 0.5,  # Normalized relative position
             np.array([gripper_pos[2]]),  # Absolute z for height reference
@@ -175,30 +154,31 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
             gripper_vel  # Velocities
         ])
         
-        # ========== REWARD SHAPING ==========
+        # Base reward: negative horizontal distance, scaled down to reduce variance
+        reward = -horizontal_dist * 0.5  # Scale down to keep rewards moderate
+
+        # Progress reward & stuck penalty: compute from previous distance BEFORE updating state
+        progress_reward = 0.0
+        stuck_penalty = 0.0
+        prev = self.prev_dist if hasattr(self, 'prev_dist') else None
+        if prev is not None:
+            distance_change = prev - dist
+            progress_reward = distance_change * 1.0  # Reward for getting closer (scaled down)
+            # If distance hasn't changed much since last step, apply small stuck penalty
+            if abs(dist - prev) < 0.001:
+                stuck_penalty = -0.005  # Reduced stuck penalty
+        # update stored previous distance for next step
+        self.prev_dist = dist
+
+        # Precision bonus: exponential reward as agent gets very close (encourages exact convergence)
+        precision_bonus = 0.0
+        if horizontal_dist < 0.03:  # Within 3 cm
+            # Exponential bonus: e^(-20*d) peaks at d=0
+            precision_bonus = 5.0 * np.exp(-20.0 * horizontal_dist)
         
-        # 1. Base reward: negative distance (encourages getting closer)
-        base_reward = -dist * 2.0
-        
-        # 2. Horizontal precision reward (most important for "move over" task)
-        # Use exponential decay to heavily reward being close horizontally
-        horizontal_precision = -horizontal_dist * 8.0  # Increased weight
-        # Bonus for being very close (encourages precision)
-        if horizontal_dist < 0.05:  # Within 5cm
-            horizontal_precision += 5.0 * (0.05 - horizontal_dist) / 0.05  # Stronger bonus
-        
-        # 2b. Settling reward: reward for being still when close (reduces vibrations)
-        velocity_magnitude = np.linalg.norm(gripper_vel)
-        settling_reward = 0.0
-        if horizontal_dist < 0.02:  # Very close
-            # Reward low velocity (being still)
-            settling_reward = 2.0 * (1.0 - min(velocity_magnitude / 0.1, 1.0))
-        
-        # 2c. Velocity penalty: discourage unnecessary movement
-        velocity_penalty = -0.5 * velocity_magnitude if horizontal_dist < 0.05 else 0.0
-        
-        # 3. Height maintenance reward (critical when up/down is learnable)
+        # Height penalty/reward
         if self.enable_updown_control:
+            '''
             # Detect horizontal drift: if actions are consistently in one direction
             drift_penalty = 0.0
             if len(self.action_history) >= self.action_history_size:
@@ -220,13 +200,13 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
                     # If there's strong bias and we're not making progress, penalize
                     if bias_magnitude > 0.7 and horizontal_dist > 0.1:
                         drift_penalty = -2.0 * bias_magnitude
-            
+            '''
             # Target height above block
             target_dz = TARGET_HEIGHT
             height_error = abs(dz - target_dz)
             
             # Prioritize horizontal movement: only apply height reward when close
-            if horizontal_dist > 0.15:  # Far from block: prioritize horizontal movement
+            if horizontal_dist > BLOCK_DIMENSION * 3.0:  # Far from block: prioritize horizontal movement
                 height_reward = -height_error * 1.0  # Weak height reward
             else:  # Close: maintain height
                 height_reward = -height_error * 4.0  # Stronger height reward
@@ -235,90 +215,35 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
             if MIN_ABOVE <= dz <= TARGET_HEIGHT + 0.02:
                 height_reward += 1.5
             
-            # Strong penalty for going below block
+            # Strong penalty for going below block (collision)
             if dz < 0:
-                height_reward -= 8.0 * abs(dz)
+                height_reward -= 15.0 * abs(dz)  # Increased collision penalty
+            # Also penalize being too close to block even from above (risk of collision)
+            if 0 <= dz < 0.01:  # Within 1 cm (collision risk)
+                height_reward -= 5.0 * (0.01 - dz)  # Penalty scales with proximity
             
-            height_reward += drift_penalty
+            #height_reward += drift_penalty
         else:
             height_reward = 0.0
             # Small penalty if somehow below block (shouldn't happen with fixed lift)
             if dz < 0:
                 height_reward = -2.0
         
-        # 4. Progress reward (potential-based shaping)
-        progress_reward = 0.0
-        if self.prev_horizontal_dist is not None:
-            horizontal_progress = self.prev_horizontal_dist - horizontal_dist
-            # Stronger reward for progress, especially when far
-            if horizontal_dist > 0.1:
-                progress_reward = horizontal_progress * 15.0  # Very strong when far
-            else:
-                progress_reward = horizontal_progress * 8.0  # Moderate when close
+        reward = reward + progress_reward + stuck_penalty + height_reward + precision_bonus
         
-        # 5. Action-change penalty: penalize drastic changes in the commanded target
-        # Since actuators are position targets (not forces), penalizing absolute magnitude is
-        # less appropriate than penalizing sudden changes (which cause oscillation).
-        # Compute delta relative to previous smoothed action (prev_action_before captured earlier)
-        if prev_action_before is None:
-            action_delta = np.zeros_like(action_clipped)
-        else:
-            action_delta = action_clipped - prev_action_before
-
-        # Now update stored smoothed action for next step
-        self.prev_action = action_clipped.copy()
-
-        if len(action_delta) >=3:
-            action_delta = action_delta[1:]  # Only horizontal components when up/down enabled
-        # Stronger penalty when close to target to encourage settling
-        action_penalty_weight = 100. * max(0.0, 1.0 - horizontal_dist / (SUCCESS_THRESHOLD * 10.))
-        action_penalty = -action_penalty_weight * float(np.linalg.norm(action_delta))
-        
-        # 6. Precision bonus (heavily rewards being very close)
-        precision_bonus = 0.0
-        if horizontal_dist < SUCCESS_THRESHOLD * 2:  # Within 2x success threshold
-            precision_bonus = 5.0 * (1.0 - horizontal_dist / (SUCCESS_THRESHOLD * 2))
-        
-        # 7. Success bonus
-        success_bonus = 0.0
-        terminated = (horizontal_dist <= SUCCESS_THRESHOLD) and (dz >= MIN_ABOVE)
+        # Success only when horizontally close and above minimum height (if up/down is learnable)
+        terminated = (horizontal_dist <= SUCCESS_THRESHOLD) and ((dz >= MIN_ABOVE) if self.enable_updown_control else True)
         if terminated:
-            success_bonus = 20.0
-        
-        # Compose final reward
-        reward = (base_reward + 
-                 horizontal_precision + 
-                 settling_reward +
-                 velocity_penalty +
-                 height_reward + 
-                 progress_reward + 
-                 action_penalty + 
-                 precision_bonus + 
-                 success_bonus)
-        
-        # Update previous values
-        self.prev_dist = dist
-        self.prev_horizontal_dist = horizontal_dist
-        self.prev_dz = dz
-        
+            reward += 10.0  # Large success bonus
         truncated = self.step_count >= self.max_steps
-
-        # Rich info for debugging
         info = {
             "distance": dist,
             "horizontal_dist": horizontal_dist,
-            "vertical_dist": vertical_dist,
             "dz": dz,
-            "base_reward": base_reward,
-            "horizontal_precision": horizontal_precision,
-            "settling_reward": settling_reward,
-            "velocity_penalty": velocity_penalty,
+            "progress": progress_reward,
+            "stuck_penalty": stuck_penalty,
             "height_reward": height_reward,
-            "progress_reward": progress_reward,
             "precision_bonus": precision_bonus,
-            "success_bonus": success_bonus,
-            "action_penalty": action_penalty,
-            "action_delta": action_delta.tolist(),
         }
 
         if self.render_mode == "human":
@@ -345,8 +270,12 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         horizontal_dist = np.linalg.norm((gripper_pos - block_pos)[:2])
         vertical_dist = abs(rel[2])
         
-        # Get velocities
-        gripper_vel = self.data.qvel[:2] if len(self.data.qvel) >= 2 else np.array([0.0, 0.0])
+        # Get gripper linear velocity for observation at reset
+        try:
+            gripper_lin = self.data.xvel[self.gripper]
+            gripper_vel = np.array(gripper_lin[:2], dtype=float)
+        except Exception:
+            gripper_vel = np.array([0.0, 0.0], dtype=float)
         
         # Observation (same format as step)
         obs = np.concatenate([
@@ -371,7 +300,11 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         
         horizontal_dist = np.linalg.norm((gripper_pos - block_pos)[:2])
         vertical_dist = abs(rel[2])
-        gripper_vel = self.data.qvel[:2] if len(self.data.qvel) >= 2 else np.array([0.0, 0.0])
+        try:
+            gripper_lin = self.data.xvel[self.gripper]
+            gripper_vel = np.array(gripper_lin[:2], dtype=float)
+        except Exception:
+            gripper_vel = np.array([0.0, 0.0], dtype=float)
         
         return np.concatenate([
             rel / 0.5,
