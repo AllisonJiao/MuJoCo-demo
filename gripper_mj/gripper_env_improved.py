@@ -46,9 +46,9 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
     def __init__(self, render_mode=None, width=480, height=480, enable_updown_control=True, **kwargs):
         utils.EzPickle.__init__(self, render_mode=render_mode, width=width, height=height, enable_updown_control=enable_updown_control, **kwargs)
         
-        # Observation: [rel_dx, rel_dy, rel_dz, gripper_z, horizontal_dist, vertical_dist, gripper_vel_x, gripper_vel_y]
+        # Observation: [rel_dx, rel_dy, rel_dz, gripper_z, horizontal_dist, vertical_dist, finger_distance, gripper_vel_x, gripper_vel_y]
         # Adding distance components and velocities helps with precision
-        observation_space = Box(low=-np.inf, high=np.inf, shape=(8,), dtype=np.float64)
+        observation_space = Box(low=-np.inf, high=np.inf, shape=(9,), dtype=np.float64)
 
         folder_path = os.path.dirname(os.path.abspath(__file__))
         model_path = os.path.join(folder_path, os.pardir, "model", "GripperGPT.xml")
@@ -72,26 +72,29 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         self.updown = self.model.actuator("up/down").id
         self.leftright = self.model.actuator("left/right").id
         self.forwardback = self.model.actuator("forward/backward").id
-        self.actuators = np.array([self.updown, self.leftright, self.forwardback], dtype=int)
+        self.finger = self.model.actuator("finger").id
+        self.actuators = np.array([self.updown, self.leftright, self.forwardback, self.finger], dtype=int)
         
         # body ids
         self.body = self.model.body("block").id
         self.target = self.model.body("target").id
         self.gripper = self.model.body("gripper").id
+        self.left_finger = self.model.body("left_finger").id
+        self.right_finger = self.model.body("right_finger").id
 
-        # action = 3 motors (or 2 if up/down is fixed)
+        # action = 4 motors (or 3 if up/down is fixed)
         if enable_updown_control:
-            self.action_space = spaces.Box(low=-1, high=1, shape=(3,), dtype=np.float32)
+            self.action_space = spaces.Box(low=-1, high=1, shape=(4,), dtype=np.float32)
         else:
-            self.action_space = spaces.Box(low=-1, high=1, shape=(2,), dtype=np.float32)
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(8,), dtype=np.float32)
+            self.action_space = spaces.Box(low=-1, high=1, shape=(3,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(9,), dtype=np.float32)
 
         # Control scaling: smaller for up/down to encourage fine control
         # Horizontal axes can be larger for faster movement
         if enable_updown_control:
-            self.ctrl_scale = np.array([1, 1, 1], dtype=float)  # [up/down, left/right, forward/back]
+            self.ctrl_scale = np.array([1, 1, 1, 1], dtype=float)  # [up/down, left/right, forward/back, finger]
         else:
-            self.ctrl_scale = np.array([1, 1], dtype=float)  # [left/right, forward/back]
+            self.ctrl_scale = np.array([1, 1, 1], dtype=float)  # [left/right, forward/back, finger]
             self.fixed_updown_lift = 1.0  # Fixed upward lift when up/down is disabled
         
         # Reward shaping parameters
@@ -121,10 +124,12 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
             self.data.ctrl[self.updown] = scaled_action[0]
             self.data.ctrl[self.leftright] = scaled_action[1]
             self.data.ctrl[self.forwardback] = scaled_action[2]
+            self.data.ctrl[self.finger] = scaled_action[3]
         else:
             self.data.ctrl[self.updown] = self.fixed_updown_lift
             self.data.ctrl[self.leftright] = scaled_action[0]
             self.data.ctrl[self.forwardback] = scaled_action[1]
+            self.data.ctrl[self.finger] = scaled_action[2]
 
         # advance physics
         for i in range(1, 10):
@@ -132,6 +137,10 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
 
         block_pos = self.data.xpos[self.body][:3]
         gripper_pos = self.data.xpos[self.gripper][:3]
+        left_finger_xy = self.data.xpos[self.left_finger][:2]
+        right_finger_xy = self.data.xpos[self.right_finger][:2]
+
+        finger_distance = np.linalg.norm(left_finger_xy - right_finger_xy)
         
         # Relative position vector
         rel = block_pos - gripper_pos
@@ -154,7 +163,7 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         obs = np.concatenate([
             rel / 0.5,  # Normalized relative position
             np.array([gripper_pos[2]]),  # Absolute z for height reference
-            np.array([horizontal_dist, vertical_dist]),  # Distance components
+            np.array([horizontal_dist, vertical_dist, finger_distance]),  # Distance components
             gripper_vel  # Velocities
         ])
         
@@ -181,6 +190,8 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
             precision_bonus = 5.0 * np.exp(-20.0 * horizontal_dist)
         
         # Height penalty/reward
+        height_reward = 0.0
+        finger_reward = 0.0
         if self.enable_updown_control:
             # Target height above block
             target_dz = TARGET_HEIGHT
@@ -195,6 +206,9 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
             # Bonus for maintaining good height
             if MIN_ABOVE <= dz <= TARGET_HEIGHT + 0.02:
                 height_reward += 1.5
+                # Finger control: reward for keeping fingers open when over the block
+                # Reward for keeping fingers open (above a threshold)
+                finger_reward = finger_distance
             
             # Strong penalty for going below block (collision)
             if dz < 0:
@@ -210,7 +224,8 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
             if dz < 0:
                 height_reward = -2.0
         
-        reward = reward + progress_reward + stuck_penalty + height_reward + precision_bonus
+
+        reward = reward + progress_reward + stuck_penalty + height_reward + finger_reward + precision_bonus
         
         # Success only when horizontally close and above minimum height (if up/down is learnable)
         terminated = (horizontal_dist <= SUCCESS_THRESHOLD * SUCCESS_RELAXATION_FACTOR) and ((dz >= MIN_ABOVE) if self.enable_updown_control else True)
@@ -224,6 +239,7 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
             "progress": progress_reward,
             "stuck_penalty": stuck_penalty,
             "height_reward": height_reward,
+            "finger_reward": finger_reward,
             "precision_bonus": precision_bonus,
         }
 
@@ -244,6 +260,11 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
 
         block_pos = self.data.xpos[self.body][:3]
         gripper_pos = self.data.xpos[self.gripper][:3]
+        left_finger_xy = self.data.xpos[self.left_finger][:2]
+        right_finger_xy = self.data.xpos[self.right_finger][:2]
+
+        finger_distance = np.linalg.norm(left_finger_xy - right_finger_xy)
+
         rel = block_pos - gripper_pos
         
         # Distance metrics
@@ -262,7 +283,7 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         obs = np.concatenate([
             rel / 0.5,  # Normalized relative position
             np.array([gripper_pos[2]]),
-            np.array([horizontal_dist, vertical_dist]),
+            np.array([horizontal_dist, vertical_dist, finger_distance]),
             gripper_vel
         ])
 
@@ -277,6 +298,11 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         """Get current observation (same format as step/reset)"""
         block_pos = self.data.xpos[self.body][:3]
         gripper_pos = self.data.xpos[self.gripper][:3]
+        left_finger_xy = self.data.xpos[self.left_finger][:2]
+        right_finger_xy = self.data.xpos[self.right_finger][:2]
+
+        finger_distance = np.linalg.norm(left_finger_xy - right_finger_xy)
+
         rel = block_pos - gripper_pos
         
         horizontal_dist = np.linalg.norm((gripper_pos - block_pos)[:2])
@@ -290,7 +316,7 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         return np.concatenate([
             rel / 0.5,
             np.array([gripper_pos[2]]),
-            np.array([horizontal_dist, vertical_dist]),
+            np.array([horizontal_dist, vertical_dist, finger_distance]),
             gripper_vel
         ])
 

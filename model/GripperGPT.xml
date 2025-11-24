@@ -20,7 +20,7 @@
         <!-- Target -->
         <body name="target" pos="0 0 0.001">
             <joint type="free" name="target_free"/>
-            <geom type="box" size="0.1 0.2 0.001" rgba="0 1 0 1" mass="0.1" friction = "2.0"/>
+            <geom type="box" size="0.1 0.1 0.001" rgba="0 1 0 1" mass="0.1" friction = "2.0"/>
         </body>
 
         <!-- Gripper -->
@@ -69,7 +69,7 @@
                     ctrlrange="-1 1"
                     ctrllimited="true"/>
 
-            <intvelocity name="forward/backward"
+        <intvelocity name="forward/backward"
                     joint="gripper_forwardbackward"
                     kp="400" kv="40"
                     actrange="-1 1"

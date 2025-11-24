@@ -31,6 +31,7 @@ parser.add_argument("--train-timesteps", type=int, default=TRAIN_EPS, help="Tota
 parser.add_argument("--ent-coef", type=float, default=0.01, help="Entropy coefficient (higher = more exploration)")
 parser.add_argument("--enable-updown", action="store_true", help="Enable learnable up/down control")
 parser.add_argument("--learning-rate", type=float, default=3e-4, help="Learning rate")
+parser.add_argument("--eval-episodes", type=int, default=VALID_EPS, help="Number of evaluation episodes")
 args = parser.parse_args()
 
 # Render mode configuration
@@ -168,7 +169,7 @@ if args.render_video:
     os.makedirs(VIDEO_DIR, exist_ok=True)
     print(f"Videos will be saved to {VIDEO_DIR}")
 
-for i in range(VALID_EPS):
+for i in range(args.eval_episodes):
     obs, info = env.reset()
     total_r_inner = 0.0
     ep_length = 0
