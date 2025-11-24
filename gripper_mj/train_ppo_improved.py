@@ -234,8 +234,8 @@ for i in range(args.eval_episodes):
         print(f"Eval {i}: total_reward: {total_r_inner:.2f}, ep_length: {ep_length}, success: {success}")
 
 print(f"\n=== FINAL RESULTS ===")
-print(f"Mean reward: {total_r / VALID_EPS:.2f}")
-print(f"Success rate: {successes}/{VALID_EPS} ({100.0 * successes / VALID_EPS:.1f}%)")
+print(f"Mean reward: {total_r / args.eval_episodes:.2f}")
+print(f"Success rate: {successes}/{args.eval_episodes} ({100.0 * successes / args.eval_episodes:.1f}%)")
 print(f"Deterministic mode: {not args.stochastic}")
 
 # Clean up
