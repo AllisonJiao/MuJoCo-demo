@@ -12,10 +12,14 @@ from gripper_controller import rand_spawn
 
 BLOCK_DIMENSION = 0.05
 SUCCESS_THRESHOLD = 0.15 * BLOCK_DIMENSION  # Slightly more lenient for deterministic policy
+SUCCESS_RELAXATION_FACTOR = 1.0  # Success threshold relaxation factor
 MAX_STEPS = 500
 # Height constraint (meters) — gripper should hang at least this far above block
 MIN_ABOVE = 0.2  # ~20 cm above block
 TARGET_HEIGHT = BLOCK_DIMENSION + MIN_ABOVE  # Target height above block (5 cm)
+
+STUCK_THRESHOLD = 0.005  # Distance change threshold to consider as "stuck"
+STUCK_PENALTY = -0.05  # Penalty for being stuck
 
 """
 Improved GripperEnv with better reward shaping for deterministic precision and learnable up/down control.
@@ -155,7 +159,7 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         ])
         
         # Base reward: negative horizontal distance, scaled down to reduce variance
-        reward = -horizontal_dist * 0.5  # Scale down to keep rewards moderate
+        reward = -horizontal_dist  # Scale down to keep rewards moderate
 
         # Progress reward & stuck penalty: compute from previous distance BEFORE updating state
         progress_reward = 0.0
@@ -165,42 +169,19 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
             distance_change = prev - dist
             progress_reward = distance_change * 1.0  # Reward for getting closer (scaled down)
             # If distance hasn't changed much since last step, apply small stuck penalty
-            if abs(dist - prev) < 0.001:
-                stuck_penalty = -0.005  # Reduced stuck penalty
+            if abs(dist - prev) < STUCK_THRESHOLD:
+                stuck_penalty = STUCK_PENALTY
         # update stored previous distance for next step
         self.prev_dist = dist
 
         # Precision bonus: exponential reward as agent gets very close (encourages exact convergence)
         precision_bonus = 0.0
-        if horizontal_dist < 0.03:  # Within 3 cm
+        if horizontal_dist < 5 * SUCCESS_THRESHOLD:
             # Exponential bonus: e^(-20*d) peaks at d=0
             precision_bonus = 5.0 * np.exp(-20.0 * horizontal_dist)
         
         # Height penalty/reward
         if self.enable_updown_control:
-            '''
-            # Detect horizontal drift: if actions are consistently in one direction
-            drift_penalty = 0.0
-            if len(self.action_history) >= self.action_history_size:
-                # Check if horizontal actions have consistent bias
-                # When up/down enabled, actions are [up/down, left/right, forward/back]
-                # Extract horizontal components (indices 1 and 2)
-                horiz_actions = []
-                for a in self.action_history:
-                    if len(a) >= 3:
-                        horiz_actions.append(a[1:3])  # left/right, forward/back
-                    else:
-                        horiz_actions.append(a[:2])  # fallback for 2D actions
-                
-                if len(horiz_actions) > 0:
-                    horiz_actions = np.array(horiz_actions)
-                    action_bias = np.mean(horiz_actions, axis=0)
-                    bias_magnitude = np.linalg.norm(action_bias)
-                    
-                    # If there's strong bias and we're not making progress, penalize
-                    if bias_magnitude > 0.7 and horizontal_dist > 0.1:
-                        drift_penalty = -2.0 * bias_magnitude
-            '''
             # Target height above block
             target_dz = TARGET_HEIGHT
             height_error = abs(dz - target_dz)
@@ -232,7 +213,7 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         reward = reward + progress_reward + stuck_penalty + height_reward + precision_bonus
         
         # Success only when horizontally close and above minimum height (if up/down is learnable)
-        terminated = (horizontal_dist <= SUCCESS_THRESHOLD) and ((dz >= MIN_ABOVE) if self.enable_updown_control else True)
+        terminated = (horizontal_dist <= SUCCESS_THRESHOLD * SUCCESS_RELAXATION_FACTOR) and ((dz >= MIN_ABOVE) if self.enable_updown_control else True)
         if terminated:
             reward += 10.0  # Large success bonus
         truncated = self.step_count >= self.max_steps
