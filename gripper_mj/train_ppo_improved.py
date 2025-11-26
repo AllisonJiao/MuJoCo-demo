@@ -180,6 +180,7 @@ for i in range(args.eval_episodes):
     ep_actions = []
     ep_horiz = []
     ep_dz = []
+    ep_vel = []
 
     for step in range(VALID_MAX_STEPS):
         action, _ = model.predict(obs, deterministic=(not args.stochastic))
@@ -189,6 +190,7 @@ for i in range(args.eval_episodes):
         ep_actions.append(np.array(action).ravel())
         ep_horiz.append(info.get("horizontal_dist", np.nan))
         ep_dz.append(info.get("dz", np.nan))
+        ep_vel.append(info.get("velocity", np.nan))
         total_r += r
         total_r_inner += r
         ep_length += 1
@@ -230,6 +232,7 @@ for i in range(args.eval_episodes):
         print(f"  action mean: {act_mean} std: {act_std}")
         print(f"  horiz dist mean: {np.nanmean(ep_horiz):.4f} std: {np.nanstd(ep_horiz):.4f}")
         print(f"  dz mean: {np.nanmean(ep_dz):.4f} std: {np.nanstd(ep_dz):.4f}")
+        print(f"  final dist: {ep_horiz[-1]:.4f} vel: {ep_vel[-1]} acc: {(ep_vel[-2] - ep_vel[-1])*60. if len(ep_vel) > 1 else np.nan}")
     else:
         print(f"Eval {i}: total_reward: {total_r_inner:.2f}, ep_length: {ep_length}, success: {success}")
 

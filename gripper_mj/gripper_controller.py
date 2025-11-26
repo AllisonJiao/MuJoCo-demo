@@ -26,23 +26,17 @@ def rand_spawn(m, d):
     mujoco.mj_forward(m, d)
 
     # Target
-    target_joint = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "target_free")
-    target_adr = m.jnt_qposadr[target_joint]
-    # Set (x, y, z)
-    d.qpos[target_adr:target_adr+3] = [
+    target_id = m.geom("target").id
+    m.geom_pos[target_id] = np.array([
         np.random.uniform(-0.5, 0.5),   # x
         np.random.uniform(-0.5, 0.5),   # y
         0.001                           # z
-    ]
-    # Set orientation quaternion (w, x, y, z) = identity
-    d.qpos[target_adr+3:target_adr+7] = [1, 0, 0, 0]
-    # Force MuJoCo to recompute positions
-
+    ])
     
     # Reset camera: pose between block and gripper
     cam_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, "main_camera")
     cam_pos = m.cam_pos[cam_id]
-    target_pos = (d.qpos[block_adr:block_adr+3] + d.qpos[target_adr:target_adr+3])*0.5
+    target_pos = (d.qpos[block_adr:block_adr+3] + m.geom_pos[target_id])*0.5
     look_at_mat = np.zeros((3, 3))
 
     # z
