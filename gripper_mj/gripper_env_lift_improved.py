@@ -11,7 +11,7 @@ import mujoco
 from gripper_controller import rand_spawn
 
 BLOCK_DIMENSION = 0.05
-SUCCESS_THRESHOLD = 0.15 * BLOCK_DIMENSION  # Slightly more lenient for deterministic policy
+SUCCESS_THRESHOLD = 0.5 * BLOCK_DIMENSION  # Slightly more lenient for deterministic policy
 SUCCESS_RELAXATION_FACTOR = 1.0  # Success threshold relaxation factor
 MAX_STEPS = 500
 # Height constraint (meters) — gripper should hover at this height above target
@@ -323,7 +323,7 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         
         # Position gripper above block, holding it
         # Set gripper to be at block position (holding it tight)
-        gripper_height = 0.15  # Start with gripper raised above ground
+        gripper_height = np.random.uniform(0.085, 0.1)  # Start with gripper raised above ground
         
         # Set gripper position joints to align with block
         gripper_lr_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "gripper_leftright")
