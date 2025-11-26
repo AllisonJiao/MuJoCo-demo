@@ -225,12 +225,12 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         if self.prev_horizontal_dist is not None:
             # Use horizontal distance for progress to be consistent with base reward
             distance_change = self.prev_horizontal_dist - horizontal_dist
-            progress_reward = distance_change * 10.0  # Scale up to make progress more rewarding
+            progress_reward = distance_change * 20.0  # Scale up to make progress more rewarding
             
             # Stuck penalty if not making progress
             if abs(horizontal_dist - self.prev_horizontal_dist) < STUCK_THRESHOLD:
                 if horizontal_dist > SUCCESS_THRESHOLD:
-                    stuck_penalty = -STUCK_PENALTY
+                    stuck_penalty = -5.0*STUCK_PENALTY
                 else:
                     stuck_penalty = 2.0 * STUCK_PENALTY
         self.prev_horizontal_dist = horizontal_dist
