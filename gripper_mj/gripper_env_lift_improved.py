@@ -42,8 +42,8 @@ Key features:
 
 Reward structure (balanced to prevent exploitation):
 - Base reward: -2.0 * horizontal_distance (encourages moving toward target)
-- Progress reward: 20.0 * (prev_horiz_dist - curr_horiz_dist) (strong incentive for progress)
-- Velocity penalty: -2.0 * speed (when far from target, prevents high-speed circling)
+- Progress reward: 50.0 * (prev_horiz_dist - curr_horiz_dist) (very strong incentive for progress)
+- Velocity penalty: -3.0 * (speed - 0.3) only when speed > 0.3 m/s (allows normal movement)
 - Height reward: -3.0 * height_error (stronger when far, prevents ground gliding)
 - Downward velocity penalty: -5.0 * vertical_speed (prevents rapid descent)
 - Low height penalty: -15.0 * (MIN_HEIGHT - height) when below minimum
@@ -231,7 +231,7 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         if self.prev_horizontal_dist is not None:
             # Use horizontal distance for progress to be consistent with base reward
             distance_change = self.prev_horizontal_dist - horizontal_dist
-            progress_reward = distance_change * 20.0  # Scale up to make progress more rewarding
+            progress_reward = distance_change * 50.0  # Increased from 20.0 to strongly encourage target approach
             
             # Stuck penalty if not making progress
             if abs(horizontal_dist - self.prev_horizontal_dist) < STUCK_THRESHOLD:
@@ -291,13 +291,13 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
             # Strong penalty for dropping the block
             finger_reward = -20.0
         
-        # Velocity penalty: discourage high-speed movements (prevents circling behavior)
+        # Velocity penalty: only penalize EXCESSIVE speed (prevents circling without hindering normal movement)
         velocity_penalty = 0.0
         gripper_speed = np.linalg.norm(gripper_vel)
         if horizontal_dist > SUCCESS_THRESHOLD:
-            # Penalize excessive speed when not at target
-            # Encourage controlled, smooth movements
-            velocity_penalty = -gripper_speed * 2.0
+            # Only penalize speeds above 0.3 m/s to allow normal movement toward target
+            excessive_speed = max(0.0, gripper_speed - 0.3)
+            velocity_penalty = -excessive_speed * 3.0  # Penalize only excessive speed
         
         # Total reward
         reward = reward + progress_reward + stuck_penalty + height_reward + finger_reward + precision_bonus + velocity_penalty
