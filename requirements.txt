@@ -2,3 +2,9 @@ pygame
 h5py
 pymongo
 stable_baselines3
+scipy
+mujoco
+numpy
+gymnasium
+opencv-python
+torch

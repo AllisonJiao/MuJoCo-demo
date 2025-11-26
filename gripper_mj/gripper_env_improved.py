@@ -216,7 +216,7 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
             
             if MIN_ABOVE <= dz:
                 # Reward for keeping fingers open (above a threshold)
-                finger_reward = finger_distance * 3.0
+                finger_reward = finger_distance * 6.0
 
                 # Bonus for maintaining good height
                 if dz < TARGET_HEIGHT + 0.02:
@@ -297,8 +297,9 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         
         # Get gripper linear velocity for observation at reset
         try:
-            gripper_lin = self.data.xvel[self.gripper]
-            gripper_vel = np.array(gripper_lin[:2], dtype=float)
+            gripper_vel_all = np.zeros(6)
+            mujoco.mj_objectVelocity(self.model, self.data, mujoco.mjtObj.mjOBJ_BODY, self.gripper, gripper_vel_all, False)
+            gripper_vel = np.array(gripper_vel_all[3:5], dtype=float)
         except Exception:
             gripper_vel = np.array([0.0, 0.0], dtype=float)
         
@@ -331,8 +332,9 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         horizontal_dist = np.linalg.norm((gripper_pos - block_pos)[:2])
         vertical_dist = abs(rel[2])
         try:
-            gripper_lin = self.data.xvel[self.gripper]
-            gripper_vel = np.array(gripper_lin[:2], dtype=float)
+            gripper_vel_all = np.zeros(6)
+            mujoco.mj_objectVelocity(self.model, self.data, mujoco.mjtObj.mjOBJ_BODY, self.gripper, gripper_vel_all, False)
+            gripper_vel = np.array(gripper_vel_all[3:5], dtype=float)
         except Exception:
             gripper_vel = np.array([0.0, 0.0], dtype=float)
         
