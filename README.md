@@ -1,6 +1,6 @@
 # MuJoCo Gripper Training
 
-This project implements a two-stage curriculum learning approach for training a gripper to position over and grasp a block using MuJoCo and Stable-Baselines3.
+This project implements a multi-stage curriculum learning approach for training a gripper to manipulate a block using MuJoCo and Stable-Baselines3.
 
 ## Setup
 
@@ -80,6 +80,41 @@ cd gripper_mj
 - Default training timesteps: 100,000
 - Shorter episodes (200 steps max) since gripper starts close
 - Model saved to: `gripper_mj/checkpoints/ppo_model_final.zip` (or `ppo_model_grasp_final.zip`)
+
+### Stage 3: Lift and Hover Training (Improved)
+
+Train the gripper to raise a grasped block and hover over a target position. The gripper starts with the block already grasped.
+
+**Basic training:**
+```bash
+cd gripper_mj
+python train_ppo_lift_improved.py
+```
+
+**Training with custom parameters:**
+```bash
+cd gripper_mj
+python train_ppo_lift_improved.py --train-timesteps 200000 --learning-rate 3e-4
+```
+
+**Evaluation only (load trained model):**
+```bash
+cd gripper_mj
+python train_ppo_lift_improved.py --eval-only
+```
+
+**Evaluation with video rendering:**
+```bash
+cd gripper_mj
+python train_ppo_lift_improved.py --eval-only --render-video
+```
+
+**Training parameters:**
+- Default training timesteps: 100,000
+- Episodes: 500 steps max
+- Checkpoints saved every 25,000 timesteps to `gripper_mj/checkpoints_lift/`
+- Final model: `gripper_mj/checkpoints_lift/ppo_lift_model_final.zip`
+- Videos saved to: `gripper_mj/videos_lift/`
 
 ## Testing
 
@@ -177,13 +212,26 @@ Videos are saved to: `gripper_mj/videos/`
 - **Success**: Successful grasp detected via contact
 - **Max steps**: 200
 
+### Env C: Lift and Hover Environment (`GripperLiftEnv`)
+- **Goal**: Raise grasped block and hover over target position
+- **Action space**: 4D `[up/down, left/right, forward/back, finger]`
+- **Observation space**: 11D `[rel_x, rel_y, rel_z, gripper_z, horizontal_dist, block_height, finger_dist, vel_x, vel_y, block_z, grasped]`
+  - Relative position is from block to target
+  - `block_height` is height of block above target
+  - `grasped` is binary indicator (1.0 if block is grasped, 0.0 if dropped)
+- **Success**: Block horizontally aligned with target, at correct height, with minimal velocity, and still grasped
+- **Max steps**: 500
+- **Initial condition**: Gripper starts with block already grasped
+
 ## Checkpoints
 
-Checkpoints are saved in `gripper_mj/checkpoints/`:
-- `ppo_model_final.zip` - Final model (latest training)
+Checkpoints are saved in `gripper_mj/checkpoints/` (Stages 1 & 2) and `gripper_mj/checkpoints_lift/` (Stage 3):
+- `ppo_model_final.zip` - Final model (latest training, Stages 1 & 2)
 - `ppo_model_<timesteps>_steps.zip` - Intermediate checkpoints
 - `ppo_model_<timesteps>.pt` - PyTorch state dicts
-- `ppo_model_grasp_final.zip` - Grasp-specific final model
+- `ppo_model_grasp_final.zip` - Grasp-specific final model (Stage 2)
+- `ppo_lift_model_final.zip` - Lift-specific final model (Stage 3)
+- `ppo_lift_model_<timesteps>.pt` - Lift PyTorch checkpoints
 
 ## Running the MuJoCo Simulation (Original)
 
