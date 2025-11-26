@@ -44,7 +44,9 @@ Reward structure (balanced to prevent exploitation):
 - Base reward: -2.0 * horizontal_distance (encourages moving toward target)
 - Progress reward: 20.0 * (prev_horiz_dist - curr_horiz_dist) (strong incentive for progress)
 - Velocity penalty: -2.0 * speed (when far from target, prevents high-speed circling)
-- Height reward: scaled based on distance to target (prioritizes horizontal then vertical)
+- Height reward: -3.0 * height_error (stronger when far, prevents ground gliding)
+- Downward velocity penalty: -5.0 * vertical_speed (prevents rapid descent)
+- Low height penalty: -15.0 * (MIN_HEIGHT - height) when below minimum
 - Finger reward: normalized and scaled to prevent domination (~0.5 magnitude)
 - Stuck penalty: increased to encourage movement
 - Precision bonus: exponential bonus when very close to target
@@ -198,13 +200,15 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         # Height of block above target
         block_height_above_target = float(block_pos[2] - target_pos[2])
         
-        # Get gripper linear velocity
+        # Get gripper linear velocity (including Z component for vertical velocity penalty)
         try:
             gripper_vel_all = np.zeros(6)
             mujoco.mj_objectVelocity(self.model, self.data, mujoco.mjtObj.mjOBJ_BODY, self.gripper, gripper_vel_all, False)
-            gripper_vel = np.array(gripper_vel_all[3:5], dtype=float)
+            gripper_vel = np.array(gripper_vel_all[3:5], dtype=float)  # XY for observation
+            gripper_vel_z = float(gripper_vel_all[5])  # Z velocity for height penalty
         except Exception:
             gripper_vel = np.array([0.0, 0.0], dtype=float)
+            gripper_vel_z = 0.0
         
         obs = np.concatenate([
             rel_to_target / 0.5,  # Normalized relative position (block to target)
@@ -253,19 +257,24 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         height_error = abs(block_height_above_target - target_height)
         
         if horizontal_dist > BLOCK_DIMENSION * 3.0:
-            # Far from target: weak height reward, prioritize horizontal movement
-            height_reward = -height_error * 1.0  # Slightly increased from 0.5
+            # Far from target: still maintain height (increased penalty)
+            height_reward = -height_error * 3.0  # Increased from 1.0 to prevent ground gliding
         else:
             # Close to target: stronger height reward
-            height_reward = -height_error * 5.0  # Slightly increased from 4.0
+            height_reward = -height_error * 5.0
             
             # Bonus for being at good height
-            if abs(block_height_above_target - target_height) < 0.03:  # Slightly more lenient
+            if abs(block_height_above_target - target_height) < 0.03:
                 height_reward += 2.0
         
-        # Penalty for being too low (risk of collision with ground)
-        if block_height_above_target < MIN_ABOVE_TARGET * 0.5:
-            height_reward -= 10.0 * (MIN_ABOVE_TARGET * 0.5 - block_height_above_target)
+        # Penalty for being too low (prevents ground gliding)
+        if block_height_above_target < MIN_ABOVE_TARGET:
+            # Strong penalty for being below minimum height
+            height_reward -= 15.0 * (MIN_ABOVE_TARGET - block_height_above_target)
+        
+        # Penalty for downward velocity (prevents rapid descent)
+        if gripper_vel_z < -0.1:  # Moving down faster than 0.1 m/s
+            height_reward -= 5.0 * abs(gripper_vel_z)  # Penalize fast descents
         
         # Finger reward: keep fingers closed to maintain grasp
         finger_reward = 0.0

@@ -128,23 +128,29 @@ The environment uses a carefully balanced reward function to encourage learning 
 3. **Velocity Penalty** (-2.0 × speed when far from target): Prevents high-speed circling behavior
    - Encourages controlled, smooth movements
    - Only applied when not at target to allow final approach
-4. **Height Maintenance**: Reward for maintaining appropriate height above target
-   - Weak when far from target (prioritizes horizontal movement)
-   - Strong when close to target (prioritizes correct height)
-5. **Finger Control**: Normalized reward for keeping fingers closed
+4. **Height Maintenance** (-3.0 × height_error): Maintains appropriate height above target
+   - Strong penalty even when far from target (prevents ground gliding)
+   - Stronger (-5.0x) when close to target
+5. **Downward Velocity Penalty** (-5.0 × vertical_speed when descending fast): Prevents rapid descent
+   - Applied when vertical velocity exceeds 0.1 m/s downward
+   - Discourages "dive and glide" behavior
+6. **Low Height Penalty** (-15.0 × height_deficit): Strong penalty for being below minimum height
+   - Prevents gliding on ground
+7. **Finger Control**: Normalized reward for keeping fingers closed
    - Scaled to ~0.5 magnitude to prevent dominating other rewards
    - Prevents the agent from exploiting finger movement
-6. **Stuck Penalty**: Increased penalty if agent isn't making progress (5x base)
-7. **Precision Bonus**: Exponential reward when very close to target
-8. **Success Bonus**: Large reward (+20) when all success criteria are met
-9. **Drop Penalty**: Large penalty (-50) if block is dropped
+8. **Stuck Penalty**: Increased penalty if agent isn't making progress (5x base)
+9. **Precision Bonus**: Exponential reward when very close to target
+10. **Success Bonus**: Large reward (+20) when all success criteria are met
+11. **Drop Penalty**: Large penalty (-50) if block is dropped
 
 **Key Design Choices:**
 - Progress reward is 20x scaled to strongly encourage moving toward target
 - Velocity penalty prevents exploitation through rapid back-and-forth movements
+- Height penalty is now applied strongly even when far from target (prevents ground gliding)
+- Downward velocity is explicitly penalized to prevent rapid descents
 - Finger reward is normalized and reduced to prevent exploitation
 - Horizontal distance used consistently for both base and progress rewards
-- Height reward adapts based on proximity to target
 
 ## Training Tips
 
