@@ -39,6 +39,14 @@ Key features:
 4. Reward for keeping fingers closed (maintaining grasp)
 5. Penalty for dropping the block
 6. Success when hovering over target at correct height with minimal velocity
+
+Reward structure (balanced to prevent exploitation):
+- Base reward: -2.0 * horizontal_distance (encourages moving toward target)
+- Progress reward: 10.0 * (prev_horiz_dist - curr_horiz_dist) (strong incentive for progress)
+- Height reward: scaled based on distance to target (prioritizes horizontal then vertical)
+- Finger reward: normalized and scaled to prevent domination (~0.5 magnitude)
+- Precision bonus: exponential bonus when very close to target
+- Drop penalty: -50.0 for dropping the block
 """
 
 class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
@@ -207,22 +215,25 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         
         # === REWARD SHAPING ===
         
-        # Base reward: negative horizontal distance to target
-        reward = -horizontal_dist
+        # Base reward: negative horizontal distance to target (scaled down to prevent domination)
+        # Scale by 2 to keep reward in reasonable range
+        reward = -horizontal_dist * 2.0
         
-        # Progress reward: getting closer to target
+        # Progress reward: getting closer to target horizontally (use horizontal distance for consistency)
         progress_reward = 0.0
         stuck_penalty = 0.0
-        if self.prev_dist is not None:
-            distance_change = self.prev_dist - dist_block_to_target
-            progress_reward = distance_change * 1.0
+        if self.prev_horizontal_dist is not None:
+            # Use horizontal distance for progress to be consistent with base reward
+            distance_change = self.prev_horizontal_dist - horizontal_dist
+            progress_reward = distance_change * 10.0  # Scale up to make progress more rewarding
             
             # Stuck penalty if not making progress
-            if abs(dist_block_to_target - self.prev_dist) < STUCK_THRESHOLD:
+            if abs(horizontal_dist - self.prev_horizontal_dist) < STUCK_THRESHOLD:
                 if horizontal_dist > SUCCESS_THRESHOLD:
                     stuck_penalty = -STUCK_PENALTY
                 else:
                     stuck_penalty = 2.0 * STUCK_PENALTY
+        self.prev_horizontal_dist = horizontal_dist
         self.prev_dist = dist_block_to_target
         
         # Precision bonus when very close to target
@@ -241,13 +252,13 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         
         if horizontal_dist > BLOCK_DIMENSION * 3.0:
             # Far from target: weak height reward, prioritize horizontal movement
-            height_reward = -height_error * 0.5
+            height_reward = -height_error * 1.0  # Slightly increased from 0.5
         else:
             # Close to target: stronger height reward
-            height_reward = -height_error * 4.0
+            height_reward = -height_error * 5.0  # Slightly increased from 4.0
             
             # Bonus for being at good height
-            if abs(block_height_above_target - target_height) < 0.02:
+            if abs(block_height_above_target - target_height) < 0.03:  # Slightly more lenient
                 height_reward += 2.0
         
         # Penalty for being too low (risk of collision with ground)
@@ -257,12 +268,14 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         # Finger reward: keep fingers closed to maintain grasp
         finger_reward = 0.0
         if grasped:
-            # Reward for maintaining closed fingers
-            finger_reward = -finger_distance * 2.0  # Negative because we want small distance
+            # Small reward for maintaining closed fingers (don't let this dominate)
+            # Normalize by expected finger distance when grasping
+            normalized_finger_dist = finger_distance / (FINGER_GAP_CLOSED * 1.5)
+            finger_reward = -normalized_finger_dist * 0.5  # Reduced scaling
             
             # Bonus for keeping fingers tight
             if finger_distance < FINGER_GAP_CLOSED * 1.5:
-                finger_reward += 2.0
+                finger_reward += 1.0  # Reduced from 2.0
         else:
             # Strong penalty for dropping the block
             finger_reward = -20.0

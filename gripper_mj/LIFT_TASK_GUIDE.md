@@ -119,16 +119,28 @@ Prints detailed per-step diagnostics for the first evaluation episode.
 
 ## Reward Function
 
-The environment uses a sophisticated reward function to encourage learning:
+The environment uses a carefully balanced reward function to encourage learning while preventing exploitation:
 
-1. **Horizontal Alignment** (-horizontal_dist): Penalize distance from target
-2. **Progress Reward**: Reward for getting closer to target
+1. **Base Reward** (-2.0 × horizontal_dist): Encourages moving block toward target horizontally
+2. **Progress Reward** (10.0 × distance_reduction): Strong incentive for making progress toward target
+   - Uses horizontal distance for consistency with base reward
+   - Scaled up (10x) to make progress highly rewarding
 3. **Height Maintenance**: Reward for maintaining appropriate height above target
-4. **Finger Control**: Reward for keeping fingers closed (maintaining grasp)
+   - Weak when far from target (prioritizes horizontal movement)
+   - Strong when close to target (prioritizes correct height)
+4. **Finger Control**: Normalized reward for keeping fingers closed
+   - Scaled to ~0.5 magnitude to prevent dominating other rewards
+   - Prevents the agent from exploiting finger movement
 5. **Precision Bonus**: Exponential reward when very close to target
 6. **Stuck Penalty**: Small penalty if agent isn't making progress
 7. **Success Bonus**: Large reward (+20) when all success criteria are met
 8. **Drop Penalty**: Large penalty (-50) if block is dropped
+
+**Key Design Choices:**
+- Progress reward is 10x scaled to strongly encourage moving toward target
+- Finger reward is normalized and reduced to prevent exploitation
+- Horizontal distance used consistently for both base and progress rewards
+- Height reward adapts based on proximity to target
 
 ## Training Tips
 
