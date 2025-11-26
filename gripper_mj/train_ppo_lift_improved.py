@@ -134,7 +134,7 @@ if not args.eval_only:
     torch.save({
         'policy_state_dict': model.policy.state_dict(),
         'optimizer_state_dict': model.policy.optimizer.state_dict(),
-        'timesteps': TRAIN_EPS,
+        'timesteps': args.train_timesteps,
     }, final_pt_path)
     print(f"Saved final PyTorch checkpoint to {final_pt_path}")
 else:

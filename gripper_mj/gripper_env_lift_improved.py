@@ -144,6 +144,10 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         
         return left_finger_contact and right_finger_contact
 
+    def _get_target_pos(self):
+        """Helper method to get target position."""
+        return self.model.geom_pos[self.target_geom][:3]
+
     def step(self, action):
         self.step_count += 1
         
@@ -163,7 +167,7 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
 
         block_pos = self.data.xpos[self.body][:3]
         gripper_pos = self.data.xpos[self.gripper][:3]
-        target_pos = self.model.geom_pos[self.target_geom][:3]
+        target_pos = self._get_target_pos()
         left_finger_xy = self.data.xpos[self.left_finger][:2]
         right_finger_xy = self.data.xpos[self.right_finger][:2]
 
@@ -209,13 +213,12 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         # Progress reward: getting closer to target
         progress_reward = 0.0
         stuck_penalty = 0.0
-        prev = self.prev_dist if hasattr(self, 'prev_dist') else None
-        if prev is not None:
-            distance_change = prev - dist_block_to_target
+        if self.prev_dist is not None:
+            distance_change = self.prev_dist - dist_block_to_target
             progress_reward = distance_change * 1.0
             
             # Stuck penalty if not making progress
-            if abs(dist_block_to_target - prev) < STUCK_THRESHOLD:
+            if abs(dist_block_to_target - self.prev_dist) < STUCK_THRESHOLD:
                 if horizontal_dist > SUCCESS_THRESHOLD:
                     stuck_penalty = -STUCK_PENALTY
                 else:
@@ -316,7 +319,7 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         block_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "block_free")
         block_adr = self.model.jnt_qposadr[block_joint]
         block_pos = self.data.qpos[block_adr:block_adr+3].copy()
-        target_pos = self.model.geom_pos[self.target_geom][:3].copy()
+        target_pos = self._get_target_pos().copy()
         
         # Position gripper above block, holding it
         # Set gripper to be at block position (holding it tight)
@@ -379,7 +382,7 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         # Get updated positions after settling
         block_pos = self.data.xpos[self.body][:3]
         gripper_pos = self.data.xpos[self.gripper][:3]
-        target_pos = self.model.geom_pos[self.target_geom][:3]
+        target_pos = self._get_target_pos()
         left_finger_xy = self.data.xpos[self.left_finger][:2]
         right_finger_xy = self.data.xpos[self.right_finger][:2]
 
@@ -390,9 +393,11 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         horizontal_dist = np.linalg.norm((block_pos - target_pos)[:2])
         block_height_above_target = float(block_pos[2] - target_pos[2])
         
+        # Get gripper linear velocity (consistent with step method)
         try:
-            gripper_lin = self.data.xvel[self.gripper]
-            gripper_vel = np.array(gripper_lin[:2], dtype=float)
+            gripper_vel_all = np.zeros(6)
+            mujoco.mj_objectVelocity(self.model, self.data, mujoco.mjtObj.mjOBJ_BODY, self.gripper, gripper_vel_all, False)
+            gripper_vel = np.array(gripper_vel_all[3:5], dtype=float)
         except Exception:
             gripper_vel = np.array([0.0, 0.0], dtype=float)
         
@@ -416,7 +421,7 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         """Get current observation"""
         block_pos = self.data.xpos[self.body][:3]
         gripper_pos = self.data.xpos[self.gripper][:3]
-        target_pos = self.model.geom_pos[self.target_geom][:3]
+        target_pos = self._get_target_pos()
         left_finger_xy = self.data.xpos[self.left_finger][:2]
         right_finger_xy = self.data.xpos[self.right_finger][:2]
 
@@ -427,9 +432,11 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         horizontal_dist = np.linalg.norm((block_pos - target_pos)[:2])
         block_height_above_target = float(block_pos[2] - target_pos[2])
         
+        # Get gripper linear velocity (consistent with step method)
         try:
-            gripper_lin = self.data.xvel[self.gripper]
-            gripper_vel = np.array(gripper_lin[:2], dtype=float)
+            gripper_vel_all = np.zeros(6)
+            mujoco.mj_objectVelocity(self.model, self.data, mujoco.mjtObj.mjOBJ_BODY, self.gripper, gripper_vel_all, False)
+            gripper_vel = np.array(gripper_vel_all[3:5], dtype=float)
         except Exception:
             gripper_vel = np.array([0.0, 0.0], dtype=float)
         
