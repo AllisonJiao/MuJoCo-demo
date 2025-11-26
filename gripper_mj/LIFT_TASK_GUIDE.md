@@ -122,22 +122,26 @@ Prints detailed per-step diagnostics for the first evaluation episode.
 The environment uses a carefully balanced reward function to encourage learning while preventing exploitation:
 
 1. **Base Reward** (-2.0 × horizontal_dist): Encourages moving block toward target horizontally
-2. **Progress Reward** (10.0 × distance_reduction): Strong incentive for making progress toward target
+2. **Progress Reward** (20.0 × distance_reduction): Strong incentive for making progress toward target
    - Uses horizontal distance for consistency with base reward
-   - Scaled up (10x) to make progress highly rewarding
-3. **Height Maintenance**: Reward for maintaining appropriate height above target
+   - Scaled up (20x) to make progress highly rewarding
+3. **Velocity Penalty** (-2.0 × speed when far from target): Prevents high-speed circling behavior
+   - Encourages controlled, smooth movements
+   - Only applied when not at target to allow final approach
+4. **Height Maintenance**: Reward for maintaining appropriate height above target
    - Weak when far from target (prioritizes horizontal movement)
    - Strong when close to target (prioritizes correct height)
-4. **Finger Control**: Normalized reward for keeping fingers closed
+5. **Finger Control**: Normalized reward for keeping fingers closed
    - Scaled to ~0.5 magnitude to prevent dominating other rewards
    - Prevents the agent from exploiting finger movement
-5. **Precision Bonus**: Exponential reward when very close to target
-6. **Stuck Penalty**: Small penalty if agent isn't making progress
-7. **Success Bonus**: Large reward (+20) when all success criteria are met
-8. **Drop Penalty**: Large penalty (-50) if block is dropped
+6. **Stuck Penalty**: Increased penalty if agent isn't making progress (5x base)
+7. **Precision Bonus**: Exponential reward when very close to target
+8. **Success Bonus**: Large reward (+20) when all success criteria are met
+9. **Drop Penalty**: Large penalty (-50) if block is dropped
 
 **Key Design Choices:**
-- Progress reward is 10x scaled to strongly encourage moving toward target
+- Progress reward is 20x scaled to strongly encourage moving toward target
+- Velocity penalty prevents exploitation through rapid back-and-forth movements
 - Finger reward is normalized and reduced to prevent exploitation
 - Horizontal distance used consistently for both base and progress rewards
 - Height reward adapts based on proximity to target

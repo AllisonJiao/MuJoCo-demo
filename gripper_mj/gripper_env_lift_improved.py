@@ -42,9 +42,11 @@ Key features:
 
 Reward structure (balanced to prevent exploitation):
 - Base reward: -2.0 * horizontal_distance (encourages moving toward target)
-- Progress reward: 10.0 * (prev_horiz_dist - curr_horiz_dist) (strong incentive for progress)
+- Progress reward: 20.0 * (prev_horiz_dist - curr_horiz_dist) (strong incentive for progress)
+- Velocity penalty: -2.0 * speed (when far from target, prevents high-speed circling)
 - Height reward: scaled based on distance to target (prioritizes horizontal then vertical)
 - Finger reward: normalized and scaled to prevent domination (~0.5 magnitude)
+- Stuck penalty: increased to encourage movement
 - Precision bonus: exponential bonus when very close to target
 - Drop penalty: -50.0 for dropping the block
 """
@@ -280,8 +282,16 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
             # Strong penalty for dropping the block
             finger_reward = -20.0
         
+        # Velocity penalty: discourage high-speed movements (prevents circling behavior)
+        velocity_penalty = 0.0
+        gripper_speed = np.linalg.norm(gripper_vel)
+        if horizontal_dist > SUCCESS_THRESHOLD:
+            # Penalize excessive speed when not at target
+            # Encourage controlled, smooth movements
+            velocity_penalty = -gripper_speed * 2.0
+        
         # Total reward
-        reward = reward + progress_reward + stuck_penalty + height_reward + finger_reward + precision_bonus
+        reward = reward + progress_reward + stuck_penalty + height_reward + finger_reward + precision_bonus + velocity_penalty
         
         # Penalty for dropping block
         if self.block_dropped:
@@ -309,6 +319,7 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
             "height_reward": height_reward,
             "finger_reward": finger_reward,
             "precision_bonus": precision_bonus,
+            "velocity_penalty": velocity_penalty,
             "velocity": gripper_vel,
             "grasped": grasped,
             "block_dropped": self.block_dropped
