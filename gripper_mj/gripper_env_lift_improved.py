@@ -281,11 +281,11 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         if grasped:
             # Small reward for maintaining closed fingers (don't let this dominate)
             # Normalize by expected finger distance when grasping
-            normalized_finger_dist = finger_distance / (FINGER_GAP_CLOSED * 1.5)
+            normalized_finger_dist = finger_distance / (FINGER_GAP_CLOSED * 1.25)
             finger_reward = -normalized_finger_dist * 0.5  # Reduced scaling
             
             # Bonus for keeping fingers tight
-            if finger_distance < FINGER_GAP_CLOSED * 1.5:
+            if finger_distance < FINGER_GAP_CLOSED * 1.25:
                 finger_reward += 1.0  # Reduced from 2.0
         else:
             # Strong penalty for dropping the block
@@ -295,9 +295,12 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         velocity_penalty = 0.0
         gripper_speed = np.linalg.norm(gripper_vel)
         if horizontal_dist > SUCCESS_THRESHOLD:
-            # Only penalize speeds above 0.3 m/s to allow normal movement toward target
-            excessive_speed = max(0.0, gripper_speed - 0.3)
+            # Only penalize speeds above 0.15 m/s to allow normal movement toward target
+            excessive_speed = max(0.0, gripper_speed - 0.15)
             velocity_penalty = -excessive_speed * 3.0  # Penalize only excessive speed
+        else:
+            #velocity_penalty = -gripper_speed * 6.0
+            velocity_penalty = np.exp(-2.0 * np.linalg.norm(gripper_vel)) * 3.0#-gripper_speed * 3.0
         
         # Total reward
         reward = reward + progress_reward + stuck_penalty + height_reward + finger_reward + precision_bonus + velocity_penalty
@@ -309,7 +312,7 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         # Success criteria
         horizontal_success = horizontal_dist <= SUCCESS_THRESHOLD * SUCCESS_RELAXATION_FACTOR
         height_success = abs(block_height_above_target - target_height) < 0.05  # Within 5cm of target height
-        velocity_success = np.linalg.norm(gripper_vel) < SUCCESS_THRESHOLD * 0.2
+        velocity_success = np.linalg.norm(gripper_vel) < SUCCESS_THRESHOLD * 2.0
         grasp_success = grasped
         
         terminated = horizontal_success and height_success and velocity_success and grasp_success
