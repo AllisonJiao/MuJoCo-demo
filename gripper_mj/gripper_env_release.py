@@ -39,8 +39,16 @@ BLOCK_ON_GROUND_HEIGHT = BLOCK_DIMENSION + 0.01  # Block resting on ground (with
 
 # Reward scaling constants
 FINGER_OPEN_REWARD_SCALE = 30.0  # Reward for opening fingers when in position
-FINGER_PREMATURE_PENALTY_SCALE = 50.0  # Penalty for opening fingers out of position
-FINGER_CLOSED_BONUS = 0.5  # Small bonus for keeping fingers closed when not in position
+FINGER_PREMATURE_PENALTY_SCALE = 100.0  # Stronger penalty for opening fingers out of position
+FINGER_CLOSED_BONUS = 1.0  # Bonus for keeping fingers closed when not in position
+
+# Position reward scaling
+POSITION_DISTANCE_SCALE = 3.0  # Scale for distance-based position penalty
+POSITION_PROGRESS_SCALE = 50.0  # Scale for progress reward (getting closer)
+POSITION_IN_PLACE_BONUS = 5.0  # Bonus for being in position
+HEIGHT_SCALE = 3.0  # Scale for height error penalty
+HEIGHT_IN_PLACE_BONUS = 2.0  # Bonus for correct height
+VELOCITY_STABLE_BONUS = 3.0  # Bonus for being stable (low velocity) when in position
 
 """
 Release Environment - Stage 4 of the gripper task.
@@ -243,6 +251,7 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
 
         # === REWARD SHAPING ===
         # Goal: Position over target with low velocity, then release
+        # Key: STRONG position incentive, VERY strong penalty for premature opening
         
         reward = 0.0
         
@@ -255,47 +264,48 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         # Update in_release_position status
         self.in_release_position = position_ok and height_ok and velocity_ok and grasped
         
-        # 1. Position reward: encourage moving toward target
+        # 1. Position reward: STRONG incentive to move toward target
         position_reward = 0.0
         if grasped:
-            # Base: negative distance
-            position_reward = -horizontal_dist * 1.5
+            # Base: negative distance (stronger penalty for being far)
+            position_reward = -horizontal_dist * POSITION_DISTANCE_SCALE
             
-            # Progress: reward for getting closer
+            # Progress: STRONG reward for getting closer
             if self.prev_horizontal_dist is not None:
                 distance_change = self.prev_horizontal_dist - horizontal_dist
-                position_reward += distance_change * 20.0
+                position_reward += distance_change * POSITION_PROGRESS_SCALE
             
-            # Big bonus for being in position
+            # Big bonus for being in position - accumulates each step
             if position_ok:
-                position_reward += 3.0
+                position_reward += POSITION_IN_PLACE_BONUS
         self.prev_horizontal_dist = horizontal_dist
         
         # 2. Height reward: maintain proper height
         height_reward = 0.0
         if grasped:
-            height_reward = -height_error * 2.0
+            height_reward = -height_error * HEIGHT_SCALE
             
             # Bonus for correct height
             if height_ok:
-                height_reward += 1.0
+                height_reward += HEIGHT_IN_PLACE_BONUS
             
             # Penalty for being too low
             if block_height_above_target < MIN_ABOVE_TARGET:
-                height_reward -= 5.0 * (MIN_ABOVE_TARGET - block_height_above_target)
+                height_reward -= 8.0 * (MIN_ABOVE_TARGET - block_height_above_target)
         
         # 3. Velocity reward: encourage stability when in position
         velocity_reward = 0.0
         if grasped:
             if position_ok:
                 # When in position, strongly reward low velocity
-                velocity_reward = 2.0 * np.exp(-5.0 * gripper_speed)
+                velocity_reward = VELOCITY_STABLE_BONUS * np.exp(-5.0 * gripper_speed)
             else:
-                # When not in position, allow moderate movement
-                if gripper_speed > 0.2:
-                    velocity_reward = -(gripper_speed - 0.2) * 1.0
+                # When not in position, penalize excessive speed
+                if gripper_speed > 0.25:
+                    velocity_reward = -(gripper_speed - 0.25) * 2.0
         
         # 4. Finger control reward - KEY COMPONENT
+        # VERY strong penalty for premature opening
         finger_reward = 0.0
         finger_change = 0.0
         if self.prev_finger_distance is not None:
@@ -308,30 +318,30 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
                 if finger_change > 0:
                     finger_reward = finger_change * FINGER_OPEN_REWARD_SCALE
             else:
-                # Not in position - punish finger opening
+                # NOT in position - VERY STRONG penalty for opening fingers
                 if finger_change > 0:
                     finger_reward = -finger_change * FINGER_PREMATURE_PENALTY_SCALE
-                # Small reward for keeping fingers closed
+                # Bonus for keeping fingers closed when not in position
                 if finger_distance < FINGER_GAP_CLOSED * FINGER_GAP_TOLERANCE_MULTIPLIER:
                     finger_reward += FINGER_CLOSED_BONUS
         
         # 5. Release reward (one-time when block is released)
         release_reward = 0.0
         if self.block_released and not self.release_reward_given:
-            # Calculate release quality based on position and velocity at release time
-            if horizontal_dist < POSITION_TOLERANCE and gripper_speed < VELOCITY_TOLERANCE * 2:
-                release_reward = 20.0  # Good release
+            # Calculate release quality based on position at release time
+            if horizontal_dist < POSITION_TOLERANCE:
+                release_reward = 30.0  # Good release - was in position
             elif horizontal_dist < POSITION_TOLERANCE * 2:
-                release_reward = 5.0  # OK release
+                release_reward = -10.0  # OK release but not ideal
             else:
-                release_reward = -20.0  # Bad release - too far or too fast
+                release_reward = -50.0  # Bad release - too far from target
             self.release_reward_given = True
         
         # 6. Landing reward
         landing_reward = 0.0
         if self.block_landed:
             # Reward based on how close block landed to target
-            landing_reward = 30.0 * np.exp(-15.0 * horizontal_dist)
+            landing_reward = 30.0 * np.exp(-10.0 * horizontal_dist)
             if horizontal_dist <= SUCCESS_THRESHOLD:
                 landing_reward += 50.0
         
