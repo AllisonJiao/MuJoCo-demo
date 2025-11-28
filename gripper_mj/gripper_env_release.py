@@ -271,8 +271,13 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         
         if grasped:
             if in_release_position:
-                # In position -> reward opening fingers
-                finger_reward = finger_change * 50.0  # Strong reward for opening
+                # In position -> CONTINUOUSLY reward open fingers to encourage release
+                # This counteracts the closed bonus from earlier steps
+                if finger_change > 0:
+                    finger_reward = finger_change * 50.0  # Reward for opening
+                # Add continuous bonus based on finger openness (the more open, the better)
+                openness = max(0, finger_distance - FINGER_GAP_CLOSED) / (FINGER_GAP_OPEN - FINGER_GAP_CLOSED)
+                finger_reward += openness * 5.0  # Continuous bonus for being open
             else:
                 # Not in position -> punish opening, reward closing
                 if finger_change > 0:
