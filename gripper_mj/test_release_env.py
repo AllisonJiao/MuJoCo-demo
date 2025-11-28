@@ -1,7 +1,7 @@
 from gripper_env_release import GripperReleaseEnv
 import numpy as np
 
-print("Testing GripperReleaseEnv...")
+print("Testing GripperReleaseEnv (Stage 4 - Two-Phase Release)...")
 
 env = GripperReleaseEnv()
 
@@ -32,22 +32,58 @@ for t in range(20):
               f"block_z={info.get('block_z', 0.0):.3f}  "
               f"finger_dist={info.get('finger_distance', 0.0):.3f}  "
               f"grasped={info.get('grasped', False)}  "
-              f"released={info.get('block_released', False)}  "
-              f"landed={info.get('block_landed', False)}")
+              f"in_pos={info.get('in_release_position', False)}  "
+              f"released={info.get('block_released', False)}")
 
     if terminated or truncated:
         print(f"Episode ended at step {t}")
         break
 
-# Test release behavior by opening fingers
-print("\nTesting release behavior (opening fingers)...")
-obs, info = env.reset(seed=123)
-print(f"Initial grasp: grasped={info.get('grasped', env.initial_grasp_success)}")
+# Test two-phase behavior
+print("\n=== Testing Two-Phase Release Behavior ===")
 
-# Apply finger opening action
+# Phase 1: Position adjustment - move toward target while keeping fingers closed
+print("\nPhase 1: Testing position adjustment (fingers should stay closed)...")
+obs, info = env.reset(seed=123)
+print(f"Initial state: grasped={env.initial_grasp_success}, horiz_dist={info.get('horizontal_dist', 0.0) if isinstance(info, dict) else 'N/A'}")
+
+# Move toward target but try to open fingers (should be penalized)
+for t in range(50):
+    # Action: move gripper but try to open fingers
+    action = np.array([0.0, 0.0, 0.0, -0.5])  # Try to open fingers
+    obs, reward, terminated, truncated, info = env.step(action)
+
+    if t % 10 == 0:
+        print(f"t={t:02d}  horiz_dist={info.get('horizontal_dist', 0.0):.3f}  "
+              f"finger_dist={info.get('finger_distance', 0.0):.3f}  "
+              f"in_position={info.get('in_release_position', False)}  "
+              f"finger_reward={info.get('finger_reward', 0.0):.3f}  "
+              f"grasped={info.get('grasped', False)}")
+
+    if terminated or truncated:
+        print(f"Episode ended at step {t}")
+        break
+
+# Phase 2: Test release when in position
+print("\nPhase 2: Testing release when in correct position...")
+obs, info = env.reset(seed=456)
+
+# First, try to get into position (keep fingers closed)
+print("Step 1: Getting into position...")
 for t in range(100):
-    # Action: [up/down, left/right, forward/back, finger]
-    # Negative finger action opens fingers
+    # Keep fingers closed while positioning
+    action = np.array([0.0, 0.0, 0.0, 0.5])  # Keep fingers closed
+    obs, reward, terminated, truncated, info = env.step(action)
+    
+    if info.get('in_release_position', False):
+        print(f"t={t:02d}  IN POSITION! horiz_dist={info.get('horizontal_dist', 0.0):.3f}  "
+              f"grasped={info.get('grasped', False)}")
+        break
+
+# Now try to release
+print("Step 2: Releasing block...")
+for t in range(100):
+    # Open fingers to release
     action = np.array([0.0, 0.0, 0.0, -1.0])  # Open fingers
     obs, reward, terminated, truncated, info = env.step(action)
 
