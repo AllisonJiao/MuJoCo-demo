@@ -50,6 +50,11 @@ HEIGHT_SCALE = 3.0  # Scale for height error penalty
 HEIGHT_IN_PLACE_BONUS = 2.0  # Bonus for correct height
 VELOCITY_STABLE_BONUS = 3.0  # Bonus for being stable (low velocity) when in position
 
+# Time-based release incentive
+MIN_STEPS_IN_POSITION = 5  # Minimum steps in position before release is encouraged
+RELEASE_READINESS_SCALE = 2.0  # Scale for release readiness bonus (grows with time in position)
+MAX_RELEASE_READINESS_BONUS = 10.0  # Max bonus for being ready to release
+
 """
 Release Environment - Stage 4 of the gripper task.
 
@@ -134,6 +139,7 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         self.prev_horizontal_dist = None  # For progress tracking
         self.release_reward_given = False  # Track if release reward has been given
         self.in_release_position = False  # Track if gripper has reached ideal position
+        self.steps_in_position = 0  # Count consecutive steps in release position
 
     def _check_grasped(self) -> bool:
         """
@@ -251,7 +257,7 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
 
         # === REWARD SHAPING ===
         # Goal: Position over target with low velocity, then release
-        # Key: STRONG position incentive, VERY strong penalty for premature opening
+        # Key: Time-based incentive - must stay in position briefly before release is encouraged
         
         reward = 0.0
         
@@ -261,8 +267,15 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         height_ok = height_error < HEIGHT_TOLERANCE
         velocity_ok = gripper_speed < VELOCITY_TOLERANCE
         
-        # Update in_release_position status
+        # Update in_release_position status and time counter
+        was_in_position = self.in_release_position
         self.in_release_position = position_ok and height_ok and velocity_ok and grasped
+        
+        # Track consecutive steps in position
+        if self.in_release_position:
+            self.steps_in_position += 1
+        else:
+            self.steps_in_position = 0
         
         # 1. Position reward: STRONG incentive to move toward target
         position_reward = 0.0
@@ -305,23 +318,33 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
                     velocity_reward = -(gripper_speed - 0.25) * 2.0
         
         # 4. Finger control reward - KEY COMPONENT
-        # VERY strong penalty for premature opening
+        # Time-based: only reward opening after MIN_STEPS_IN_POSITION
         finger_reward = 0.0
         finger_change = 0.0
         if self.prev_finger_distance is not None:
             finger_change = finger_distance - self.prev_finger_distance
         self.prev_finger_distance = finger_distance
         
+        # Calculate release readiness - grows with time in position
+        release_ready = self.steps_in_position >= MIN_STEPS_IN_POSITION
+        release_readiness_bonus = min(
+            (self.steps_in_position - MIN_STEPS_IN_POSITION) * RELEASE_READINESS_SCALE,
+            MAX_RELEASE_READINESS_BONUS
+        ) if release_ready else 0.0
+        
         if grasped:
-            if self.in_release_position:
-                # In good position with low velocity - reward opening fingers
+            if release_ready:
+                # Ready to release - reward opening fingers
+                # Bonus scales with time in position (encourages waiting for stability)
                 if finger_change > 0:
-                    finger_reward = finger_change * FINGER_OPEN_REWARD_SCALE
+                    finger_reward = finger_change * (FINGER_OPEN_REWARD_SCALE + release_readiness_bonus)
+                # Small bonus for being ready but waiting
+                finger_reward += 0.5
             else:
-                # NOT in position - VERY STRONG penalty for opening fingers
+                # NOT ready to release - VERY STRONG penalty for opening fingers
                 if finger_change > 0:
                     finger_reward = -finger_change * FINGER_PREMATURE_PENALTY_SCALE
-                # Bonus for keeping fingers closed when not in position
+                # Bonus for keeping fingers closed when not ready
                 if finger_distance < FINGER_GAP_CLOSED * FINGER_GAP_TOLERANCE_MULTIPLIER:
                     finger_reward += FINGER_CLOSED_BONUS
         
@@ -329,8 +352,10 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         release_reward = 0.0
         if self.block_released and not self.release_reward_given:
             # Calculate release quality based on position at release time
+            # Bonus if released after being in position for a while
+            time_bonus = min(self.steps_in_position * 2.0, 20.0)
             if horizontal_dist < POSITION_TOLERANCE:
-                release_reward = 30.0  # Good release - was in position
+                release_reward = 30.0 + time_bonus  # Good release - was in position
             elif horizontal_dist < POSITION_TOLERANCE * 2:
                 release_reward = -10.0  # OK release but not ideal
             else:
@@ -364,6 +389,8 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
             "finger_distance": finger_distance,
             "grasped": grasped,
             "in_release_position": self.in_release_position,
+            "steps_in_position": self.steps_in_position,
+            "release_ready": release_ready,
             "block_released": self.block_released,
             "block_landed": self.block_landed,
             "position_reward": position_reward,
@@ -396,6 +423,7 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         self.prev_horizontal_dist = None
         self.release_reward_given = False
         self.in_release_position = False
+        self.steps_in_position = 0
 
         # Randomize target position
         rand_spawn(self.model, self.data)
