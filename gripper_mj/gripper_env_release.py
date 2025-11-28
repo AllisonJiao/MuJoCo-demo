@@ -11,7 +11,7 @@ import mujoco
 from gripper_controller import rand_spawn
 
 BLOCK_DIMENSION = 0.05
-SUCCESS_THRESHOLD = 0.1  # Horizontal distance threshold for block landing on target
+SUCCESS_THRESHOLD = BLOCK_DIMENSION * 0.5  # Horizontal distance threshold for block landing on target
 SUCCESS_RELAXATION_FACTOR = 1.0
 MAX_STEPS = 500
 # Height constraint (meters) — gripper starts hovering above target
@@ -26,7 +26,7 @@ FINGER_GAP_CLOSED = 2 * FINGER_WIDTH  # Gap when fingers closed
 FINGER_GAP_OPEN = BLOCK_DIMENSION + 2 * FINGER_WIDTH + 0.02  # Gap when fingers fully open
 
 # Block landing detection
-BLOCK_ON_GROUND_HEIGHT = BLOCK_DIMENSION + 0.01  # Block resting on ground (with small tolerance)
+BLOCK_ON_GROUND_HEIGHT = 0.5 * BLOCK_DIMENSION + 0.01  # Block resting on ground (with small tolerance)
 
 """
 Release Environment - Stage 4 of the gripper task.
@@ -222,14 +222,18 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         ])
 
         # === REWARD SHAPING ===
-        reward = 0.0
+        reward = -horizontal_dist * 2.0
 
         # 1. Finger opening reward: encourage opening fingers to release block
         finger_open_reward = 0.0
         if self.prev_finger_distance is not None:
             # Reward for increasing finger distance (opening)
             finger_change = finger_distance - self.prev_finger_distance
-            finger_open_reward = finger_change * 10.0  # Encourage opening
+
+            if horizontal_dist < SUCCESS_THRESHOLD * 0.9:
+                finger_open_reward = finger_change * 10.0  # Encourage opening
+            else:
+                finger_open_reward = -finger_change * 10.0  # Less reward if far from target
         self.prev_finger_distance = finger_distance
 
         # Small continuous bonus for fingers being wide open (scaled down to avoid domination)
@@ -239,7 +243,10 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         # 2. Block release reward: one-time bonus when block is released
         release_reward = 0.0
         if self.block_released and not self.release_reward_given:
-            release_reward = 5.0  # One-time bonus for releasing
+            if horizontal_dist < SUCCESS_THRESHOLD * 0.9:
+                release_reward = 5.0  # One-time bonus for releasing
+            else:
+                release_reward = -50.0  # Penalty for releasing far from target
             self.release_reward_given = True
 
         # 3. Stability reward: penalize excessive gripper movement
@@ -261,7 +268,7 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
                 landing_reward += 30.0
 
         # Total reward
-        reward = finger_open_reward + release_reward + stability_reward + height_reward + landing_reward
+        reward = reward + finger_open_reward + release_reward + stability_reward + height_reward + landing_reward
 
         # Success criteria: block has landed on ground within threshold distance of target
         terminated = self.block_landed and horizontal_dist <= SUCCESS_THRESHOLD * SUCCESS_RELAXATION_FACTOR
@@ -330,8 +337,8 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         gripper_height = TARGET_HEIGHT_ABOVE_TARGET + np.random.uniform(-0.02, 0.02)
 
         # Add small position noise to gripper XY (but keep it above target)
-        pos_noise_x = np.random.uniform(-0.02, 0.02)
-        pos_noise_y = np.random.uniform(-0.02, 0.02)
+        pos_noise_x = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 0.0
+        pos_noise_y = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 0.0
 
         # Set gripper position aligned above target with noise
         self.data.qpos[lr_adr] = target_pos[0] + pos_noise_x
@@ -352,11 +359,6 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         # Set block orientation to identity
         self.data.qpos[block_adr+3:block_adr+7] = [1, 0, 0, 0]
 
-        # Add small velocity noise (as in lift_improved success conditions)
-        # Velocity noise should be small to ensure stability
-        vel_noise = np.random.uniform(-0.02, 0.02, size=self.data.qvel.shape)
-        self.data.qvel[:] = vel_noise
-
         # Set finger actuator to maintain closed position initially
         self.data.ctrl[self.finger] = 0.8  # Strong positive to keep fingers closed
 
@@ -370,6 +372,11 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
             self.data.ctrl[self.leftright] = 0.0  # Hold horizontal position
             self.data.ctrl[self.forwardback] = 0.0
             mujoco.mj_step(self.model, self.data)
+        
+        # Add small velocity noise (as in lift_improved success conditions)
+        # Velocity noise should be small to ensure stability
+        vel_noise = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD, size=self.data.qvel.shape)
+        self.data.qvel[:] = vel_noise
 
         # Check if grasp was successful
         self.initial_grasp_success = self._check_grasped()
