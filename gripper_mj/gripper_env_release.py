@@ -30,10 +30,16 @@ FINGER_WIDTH = 0.02  # Width of each finger (meters)
 FINGER_GAP_CLOSED = 2 * FINGER_WIDTH  # Gap when fingers closed
 FINGER_GAP_OPEN = BLOCK_DIMENSION + 2 * FINGER_WIDTH + 0.02  # Gap when fingers fully open
 FINGER_GAP_TOLERANCE_MULTIPLIER = 1.25  # Multiplier for finger gap tolerance
+FINGER_CLOSE_COMMAND = 0.8  # Actuator command to close fingers
+FINGER_CLOSE_POSITION = 0.015  # Joint position for closed fingers
 
 # Velocity control parameters
 SPEED_THRESHOLD = 0.15  # Speed (m/s) above which velocity penalty applies
 VELOCITY_REWARD_DECAY = 2.0  # Decay constant for velocity reward exponential
+
+# Initialization parameters
+INITIAL_POSITION_NOISE_RANGE = SUCCESS_THRESHOLD  # Range for initial position noise
+INITIAL_HEIGHT_NOISE = 0.01  # Range for initial height noise
 
 # Block landing detection
 BLOCK_ON_GROUND_HEIGHT = 0.5 * BLOCK_DIMENSION + 0.01  # Block resting on ground (with small tolerance)
@@ -215,7 +221,7 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
             self.data.ctrl[self.finger] = scaled_action[3]
         else:
             # Force fingers to stay closed - override any open command
-            self.data.ctrl[self.finger] = 0.8  # Strong close command
+            self.data.ctrl[self.finger] = FINGER_CLOSE_COMMAND
 
         # advance physics
         for i in range(1, 10):
@@ -435,11 +441,11 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         right_adr = self.model.jnt_qposadr[right_finger_joint]
 
         # Position gripper above target with small noise
-        gripper_height = TARGET_HEIGHT_ABOVE_TARGET + np.random.uniform(-0.01, 0.01)
+        gripper_height = TARGET_HEIGHT_ABOVE_TARGET + np.random.uniform(-INITIAL_HEIGHT_NOISE, INITIAL_HEIGHT_NOISE)
 
         # Small position noise - much smaller than before to help initial learning
-        pos_noise_x = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD)
-        pos_noise_y = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD)
+        pos_noise_x = np.random.uniform(-INITIAL_POSITION_NOISE_RANGE, INITIAL_POSITION_NOISE_RANGE)
+        pos_noise_y = np.random.uniform(-INITIAL_POSITION_NOISE_RANGE, INITIAL_POSITION_NOISE_RANGE)
 
         # Set gripper position aligned above target with noise
         self.data.qpos[lr_adr] = target_pos[0] + pos_noise_x
@@ -447,9 +453,8 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         self.data.qpos[ud_adr] = -(0.3 - gripper_height)
 
         # Set fingers to closed position
-        finger_close_pos = 0.015
-        self.data.qpos[left_adr] = finger_close_pos
-        self.data.qpos[right_adr] = finger_close_pos
+        self.data.qpos[left_adr] = FINGER_CLOSE_POSITION
+        self.data.qpos[right_adr] = FINGER_CLOSE_POSITION
 
         # Position block at gripper location
         self.data.qpos[block_adr:block_adr+3] = [
@@ -460,7 +465,7 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         self.data.qpos[block_adr+3:block_adr+7] = [1, 0, 0, 0]
 
         # Set finger actuator to maintain closed position
-        self.data.ctrl[self.finger] = 0.8
+        self.data.ctrl[self.finger] = FINGER_CLOSE_COMMAND
 
         # Zero out velocities for clean learning
         self.data.qvel[:] = 0.0
@@ -470,7 +475,7 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
 
         # Let physics settle
         for _ in range(20):
-            self.data.ctrl[self.finger] = 0.8
+            self.data.ctrl[self.finger] = FINGER_CLOSE_COMMAND
             self.data.ctrl[self.updown] = 0.0
             self.data.ctrl[self.leftright] = 0.0
             self.data.ctrl[self.forwardback] = 0.0
