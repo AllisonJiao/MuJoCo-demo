@@ -67,7 +67,7 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         # Observation: [rel_block_to_target_dx, rel_block_to_target_dy, rel_block_to_target_dz,
         #               gripper_z, horizontal_dist_block_to_target, block_z,
         #               finger_distance, gripper_vel_x, gripper_vel_y, block_vel_z, grasped]
-        observation_space = Box(low=-np.inf, high=np.inf, shape=(11,), dtype=np.float64)
+        observation_space = Box(low=-np.inf, high=np.inf, shape=(11,), dtype=np.float32)
 
         folder_path = os.path.dirname(os.path.abspath(__file__))
         model_path = os.path.join(folder_path, os.pardir, "model", "GripperGPT.xml")
@@ -112,6 +112,7 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         self.block_landed = False
         self.initial_grasp_success = False
         self.prev_finger_distance = None
+        self.release_reward_given = False  # Track if release reward has been given
 
     def _check_grasped(self) -> bool:
         """
@@ -231,14 +232,15 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
             finger_open_reward = finger_change * 10.0  # Encourage opening
         self.prev_finger_distance = finger_distance
 
-        # Bonus for fingers being wide open
+        # Small continuous bonus for fingers being wide open (scaled down to avoid domination)
         if finger_distance > FINGER_GAP_OPEN * 0.8:
-            finger_open_reward += 1.0
+            finger_open_reward += 0.1  # Small per-step bonus
 
-        # 2. Block release reward: bonus when block is released
+        # 2. Block release reward: one-time bonus when block is released
         release_reward = 0.0
-        if self.block_released:
+        if self.block_released and not self.release_reward_given:
             release_reward = 5.0  # One-time bonus for releasing
+            self.release_reward_given = True
 
         # 3. Stability reward: penalize excessive gripper movement
         stability_reward = -np.linalg.norm(gripper_vel) * 0.5
@@ -298,6 +300,7 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         self.block_landed = False
         self.initial_grasp_success = False
         self.prev_finger_distance = None
+        self.release_reward_given = False
 
         # Randomize target position
         rand_spawn(self.model, self.data)
