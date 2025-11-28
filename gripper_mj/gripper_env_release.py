@@ -29,6 +29,11 @@ STUCK_PENALTY = 0.05
 FINGER_WIDTH = 0.02  # Width of each finger (meters)
 FINGER_GAP_CLOSED = 2 * FINGER_WIDTH  # Gap when fingers closed
 FINGER_GAP_OPEN = BLOCK_DIMENSION + 2 * FINGER_WIDTH + 0.02  # Gap when fingers fully open
+FINGER_GAP_TOLERANCE_MULTIPLIER = 1.25  # Multiplier for finger gap tolerance
+
+# Velocity control parameters
+SPEED_THRESHOLD = 0.15  # Speed (m/s) above which velocity penalty applies
+VELOCITY_REWARD_DECAY = 2.0  # Decay constant for velocity reward exponential
 
 # Block landing detection
 BLOCK_ON_GROUND_HEIGHT = 0.5 * BLOCK_DIMENSION + 0.01  # Block resting on ground (with small tolerance)
@@ -228,8 +233,10 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         gripper_speed = np.linalg.norm(gripper_vel)
         
         # Check if gripper is in ideal release position
+        # Use gripper height for consistency (gripper_pos[2] relative to target_pos[2])
+        gripper_height_above_target = float(gripper_pos[2] - target_pos[2])
         position_ok = horizontal_dist <= POSITION_TOLERANCE
-        height_ok = abs(block_height_above_target - TARGET_HEIGHT_ABOVE_TARGET) < HEIGHT_TOLERANCE
+        height_ok = abs(gripper_height_above_target - TARGET_HEIGHT_ABOVE_TARGET) < HEIGHT_TOLERANCE
         velocity_ok = gripper_speed < VELOCITY_TOLERANCE
         
         # Update in_release_position status
@@ -297,11 +304,11 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         if not self.in_release_position and grasped:
             # PHASE 1: NOT in position yet - keep fingers CLOSED, punish any loosening
             # Reward for maintaining closed fingers
-            normalized_finger_dist = finger_distance / (FINGER_GAP_CLOSED * 1.25)
+            normalized_finger_dist = finger_distance / (FINGER_GAP_CLOSED * FINGER_GAP_TOLERANCE_MULTIPLIER)
             finger_reward = -normalized_finger_dist * 0.5
             
             # Bonus for keeping fingers tight
-            if finger_distance < FINGER_GAP_CLOSED * 1.25:
+            if finger_distance < FINGER_GAP_CLOSED * FINGER_GAP_TOLERANCE_MULTIPLIER:
                 finger_reward += 1.0
             
             # STRONG PENALTY for opening fingers before in position
@@ -322,18 +329,18 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         if grasped:
             if horizontal_dist > POSITION_TOLERANCE:
                 # Allow movement toward target but penalize excessive speed
-                excessive_speed = max(0.0, gripper_speed - 0.15)
+                excessive_speed = max(0.0, gripper_speed - SPEED_THRESHOLD)
                 velocity_penalty = -excessive_speed * 3.0
             else:
                 # When close, reward low velocity (need to stabilize before release)
-                velocity_penalty = np.exp(-2.0 * gripper_speed) * 2.0
+                velocity_penalty = np.exp(-VELOCITY_REWARD_DECAY * gripper_speed) * VELOCITY_REWARD_DECAY
         
         # 6. Precision bonus when very close
         precision_bonus = 0.0
         if horizontal_dist < 5 * SUCCESS_THRESHOLD and grasped:
             precision_bonus = 5.0 * np.exp(-20.0 * horizontal_dist)
             if horizontal_dist <= 2.0 * SUCCESS_THRESHOLD:
-                precision_bonus += np.exp(-2.0 * gripper_speed) * 2.0
+                precision_bonus += np.exp(-VELOCITY_REWARD_DECAY * gripper_speed) * VELOCITY_REWARD_DECAY
         
         # 7. Block release reward: one-time bonus/penalty when block is released
         release_reward = 0.0
