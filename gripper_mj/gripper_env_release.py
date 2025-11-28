@@ -28,6 +28,7 @@ FINGER_GAP_CLOSED = 2 * FINGER_WIDTH  # Gap when fingers closed
 FINGER_GAP_OPEN = BLOCK_DIMENSION + 2 * FINGER_WIDTH + 0.02  # Gap when fingers fully open
 FINGER_CLOSE_COMMAND = 0.8  # Actuator command to close fingers
 FINGER_CLOSE_POSITION = 0.015  # Joint position for closed fingers
+FINGER_GAP_TOLERANCE_MULTIPLIER = 1.5  # Multiplier for finger gap tolerance in reward
 
 # Initialization parameters
 INITIAL_POSITION_NOISE_RANGE = SUCCESS_THRESHOLD  # Range for initial position noise
@@ -35,6 +36,11 @@ INITIAL_HEIGHT_NOISE = 0.01  # Range for initial height noise
 
 # Block landing detection
 BLOCK_ON_GROUND_HEIGHT = BLOCK_DIMENSION + 0.01  # Block resting on ground (with small tolerance)
+
+# Reward scaling constants
+FINGER_OPEN_REWARD_SCALE = 30.0  # Reward for opening fingers when in position
+FINGER_PREMATURE_PENALTY_SCALE = 50.0  # Penalty for opening fingers out of position
+FINGER_CLOSED_BONUS = 0.5  # Small bonus for keeping fingers closed when not in position
 
 """
 Release Environment - Stage 4 of the gripper task.
@@ -300,23 +306,22 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
             if self.in_release_position:
                 # In good position with low velocity - reward opening fingers
                 if finger_change > 0:
-                    finger_reward = finger_change * 30.0  # Strong reward for opening
+                    finger_reward = finger_change * FINGER_OPEN_REWARD_SCALE
             else:
                 # Not in position - punish finger opening
                 if finger_change > 0:
-                    finger_reward = -finger_change * 50.0  # Strong penalty for premature opening
+                    finger_reward = -finger_change * FINGER_PREMATURE_PENALTY_SCALE
                 # Small reward for keeping fingers closed
-                if finger_distance < FINGER_GAP_CLOSED * 1.5:
-                    finger_reward += 0.5
+                if finger_distance < FINGER_GAP_CLOSED * FINGER_GAP_TOLERANCE_MULTIPLIER:
+                    finger_reward += FINGER_CLOSED_BONUS
         
         # 5. Release reward (one-time when block is released)
         release_reward = 0.0
         if self.block_released and not self.release_reward_given:
             # Calculate release quality based on position and velocity at release time
-            release_horizontal_dist = horizontal_dist
-            if release_horizontal_dist < POSITION_TOLERANCE and gripper_speed < VELOCITY_TOLERANCE * 2:
+            if horizontal_dist < POSITION_TOLERANCE and gripper_speed < VELOCITY_TOLERANCE * 2:
                 release_reward = 20.0  # Good release
-            elif release_horizontal_dist < POSITION_TOLERANCE * 2:
+            elif horizontal_dist < POSITION_TOLERANCE * 2:
                 release_reward = 5.0  # OK release
             else:
                 release_reward = -20.0  # Bad release - too far or too fast
