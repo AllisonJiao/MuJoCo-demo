@@ -18,8 +18,8 @@ MAX_STEPS = 500
 MIN_ABOVE_TARGET = 0.2  # ~20 cm above target
 TARGET_HEIGHT_ABOVE_TARGET = BLOCK_DIMENSION + MIN_ABOVE_TARGET
 
-# Position tolerance for allowing release (similar to lift_improved success conditions)
-POSITION_TOLERANCE = SUCCESS_THRESHOLD * 2.0  # Must be within this distance to release
+# Position tolerance for allowing release (must be close to target to release)
+POSITION_TOLERANCE = SUCCESS_THRESHOLD * 1.5  # Must be within this distance to release
 HEIGHT_TOLERANCE = 0.05  # Must be within 5cm of target height to release
 VELOCITY_TOLERANCE = SUCCESS_THRESHOLD * 2.0  # Must have low velocity to release
 
@@ -41,23 +41,25 @@ BLOCK_ON_GROUND_HEIGHT = 0.5 * BLOCK_DIMENSION + 0.01  # Block resting on ground
 """
 Release Environment - Stage 4 of the gripper task.
 
-This environment implements a two-phase approach:
+This environment implements a two-phase approach with HARD CONSTRAINTS:
 
 PHASE 1 - POSITION ADJUSTMENT:
 - Gripper must first move to ideal position above target
-- Fingers must stay CLOSED during this phase
-- Any finger opening action is penalized
+- Fingers are FORCED to stay CLOSED (finger action is overridden)
 - Reward for moving toward target horizontally
 - Reward for maintaining proper height
 
 PHASE 2 - RELEASE:
 - Only allowed when gripper is at ideal position (within tolerance)
-- Fingers can now open to release block
+- Finger action is now allowed
 - Reward for block landing close to target
 
+The key difference is that finger opening is physically prevented until in position,
+not just penalized. This ensures the agent learns to position first.
+
 Initialization:
-- Gripper starts grasping block with position/velocity noise
-- Simulates transition from Stage 3 where gripper may have residual velocity
+- Gripper starts grasping block with small position noise
+- Velocity is set to zero to allow clean learning (Stage 3 should stabilize before transition)
 
 Success condition:
 - Block landed on ground within horizontal threshold of target
@@ -176,11 +178,44 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         action_clipped = np.clip(action, -1, 1)
         scaled_action = action_clipped * self.ctrl_scale
 
+        # Get current state for position check
+        block_pos_before = self.data.xpos[self.body][:3]
+        target_pos = self._get_target_pos()
+        gripper_pos_before = self.data.xpos[self.gripper][:3]
+        
+        horizontal_dist_before = np.linalg.norm((block_pos_before - target_pos)[:2])
+        gripper_height_above_target = float(gripper_pos_before[2] - target_pos[2])
+        
+        # Get velocity for position check
+        try:
+            gripper_vel_all = np.zeros(6)
+            mujoco.mj_objectVelocity(self.model, self.data, mujoco.mjtObj.mjOBJ_BODY, self.gripper, gripper_vel_all, False)
+            gripper_speed_before = np.linalg.norm(gripper_vel_all[3:5])
+        except Exception:
+            gripper_speed_before = 0.0
+        
+        grasped_before = self._check_grasped()
+        
+        # Check if gripper is in ideal release position BEFORE applying action
+        position_ok = horizontal_dist_before <= POSITION_TOLERANCE
+        height_ok = abs(gripper_height_above_target - TARGET_HEIGHT_ABOVE_TARGET) < HEIGHT_TOLERANCE
+        velocity_ok = gripper_speed_before < VELOCITY_TOLERANCE
+        
+        self.in_release_position = position_ok and height_ok and velocity_ok and grasped_before
+
         # Apply actions to actuators
         self.data.ctrl[self.updown] = scaled_action[0]
         self.data.ctrl[self.leftright] = scaled_action[1]
         self.data.ctrl[self.forwardback] = scaled_action[2]
-        self.data.ctrl[self.finger] = scaled_action[3]
+        
+        # CRITICAL: Override finger action if NOT in release position
+        # This is a HARD CONSTRAINT - fingers stay closed until in position
+        if self.in_release_position:
+            # Allow finger control when in position
+            self.data.ctrl[self.finger] = scaled_action[3]
+        else:
+            # Force fingers to stay closed - override any open command
+            self.data.ctrl[self.finger] = 0.8  # Strong close command
 
         # advance physics
         for i in range(1, 10):
@@ -231,16 +266,6 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
             block_vel_z = 0.0
 
         gripper_speed = np.linalg.norm(gripper_vel)
-        
-        # Check if gripper is in ideal release position
-        # Use gripper height for consistency (gripper_pos[2] relative to target_pos[2])
-        gripper_height_above_target = float(gripper_pos[2] - target_pos[2])
-        position_ok = horizontal_dist <= POSITION_TOLERANCE
-        height_ok = abs(gripper_height_above_target - TARGET_HEIGHT_ABOVE_TARGET) < HEIGHT_TOLERANCE
-        velocity_ok = gripper_speed < VELOCITY_TOLERANCE
-        
-        # Update in_release_position status
-        self.in_release_position = position_ok and height_ok and velocity_ok and grasped
 
         obs = np.concatenate([
             rel_to_target / 0.5,  # Normalized relative position (block to target)
@@ -253,119 +278,88 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
             np.array([float(grasped)])  # Grasp status
         ])
 
-        # === REWARD SHAPING ===
-        # Two-phase approach: Phase 1 = positioning, Phase 2 = release
-        
+        # === SIMPLIFIED REWARD SHAPING ===
         reward = 0.0
         
-        # ========== PHASE 1: POSITION ADJUSTMENT ==========
-        # Guide gripper to ideal position above target while keeping block grasped
+        # 1. Base reward: negative horizontal distance (encourages moving toward target)
+        base_reward = -horizontal_dist * 2.0
         
-        # 1. Progress reward: getting closer to target horizontally (like lift_improved)
+        # 2. Progress reward: getting closer to target
         progress_reward = 0.0
         if self.prev_horizontal_dist is not None and grasped:
             distance_change = self.prev_horizontal_dist - horizontal_dist
-            progress_reward = distance_change * 50.0  # Strong incentive for approaching target
+            progress_reward = distance_change * 30.0  # Reward for getting closer
         self.prev_horizontal_dist = horizontal_dist
         
-        # 2. Base horizontal distance reward
-        base_reward = -horizontal_dist * 2.0
-        
-        # 3. Height maintenance reward (like lift_improved)
+        # 3. Height maintenance reward (similar to lift_improved)
         height_reward = 0.0
         target_height = TARGET_HEIGHT_ABOVE_TARGET
         height_error = abs(block_height_above_target - target_height)
         
-        if horizontal_dist > BLOCK_DIMENSION * 3.0:
-            # Far from target: maintain height
-            height_reward = -height_error * 3.0
-        else:
-            # Close to target: stronger height reward
-            height_reward = -height_error * 5.0
-            # Bonus for being at good height
-            if height_error < 0.03:
-                height_reward += 2.0
+        # Penalty for incorrect height
+        height_reward = -height_error * 3.0
         
-        # Penalty for being too low
+        # Bonus for good height
+        if height_error < 0.03:
+            height_reward += 1.0
+        
+        # Strong penalty for being too low
         if block_height_above_target < MIN_ABOVE_TARGET:
-            height_reward -= 15.0 * (MIN_ABOVE_TARGET - block_height_above_target)
+            height_reward -= 10.0 * (MIN_ABOVE_TARGET - block_height_above_target)
         
-        # Penalty for downward velocity
+        # Penalty for fast downward velocity
         if gripper_vel_z < -0.1:
-            height_reward -= 5.0 * abs(gripper_vel_z)
+            height_reward -= 3.0 * abs(gripper_vel_z)
         
-        # 4. Finger control based on position
-        finger_reward = 0.0
-        finger_change = 0.0
-        if self.prev_finger_distance is not None:
-            finger_change = finger_distance - self.prev_finger_distance
-        self.prev_finger_distance = finger_distance
-        
-        if not self.in_release_position and grasped:
-            # PHASE 1: NOT in position yet - keep fingers CLOSED, punish any loosening
-            # Reward for maintaining closed fingers
-            normalized_finger_dist = finger_distance / (FINGER_GAP_CLOSED * FINGER_GAP_TOLERANCE_MULTIPLIER)
-            finger_reward = -normalized_finger_dist * 0.5
-            
-            # Bonus for keeping fingers tight
-            if finger_distance < FINGER_GAP_CLOSED * FINGER_GAP_TOLERANCE_MULTIPLIER:
-                finger_reward += 1.0
-            
-            # STRONG PENALTY for opening fingers before in position
-            if finger_change > 0.001:  # Fingers opening
-                finger_reward -= 20.0 * finger_change  # Heavy penalty for loosening
-                
-        elif self.in_release_position and grasped:
-            # PHASE 2: IN position - now allow and encourage finger opening
-            if finger_change > 0:
-                finger_reward = finger_change * 10.0  # Reward for opening
-            
-            # Small bonus for fingers being wide open
-            if finger_distance > FINGER_GAP_OPEN * 0.8:
-                finger_reward += 0.5
-        
-        # 5. Velocity penalty: penalize excessive speed
+        # 4. Velocity penalty: encourage moving at reasonable speed toward target
         velocity_penalty = 0.0
-        if grasped:
-            if horizontal_dist > POSITION_TOLERANCE:
-                # Allow movement toward target but penalize excessive speed
-                excessive_speed = max(0.0, gripper_speed - SPEED_THRESHOLD)
-                velocity_penalty = -excessive_speed * 3.0
-            else:
-                # When close, reward low velocity (need to stabilize before release)
-                velocity_penalty = np.exp(-VELOCITY_REWARD_DECAY * gripper_speed) * VELOCITY_REWARD_DECAY
+        if grasped and horizontal_dist > POSITION_TOLERANCE:
+            # Penalize excessive speed
+            excessive_speed = max(0.0, gripper_speed - 0.2)
+            velocity_penalty = -excessive_speed * 2.0
+        elif grasped and horizontal_dist <= POSITION_TOLERANCE:
+            # When close, reward low velocity to stabilize
+            velocity_penalty = np.exp(-2.0 * gripper_speed) * 1.0
         
-        # 6. Precision bonus when very close
+        # 5. Precision bonus when close to target
         precision_bonus = 0.0
-        if horizontal_dist < 5 * SUCCESS_THRESHOLD and grasped:
-            precision_bonus = 5.0 * np.exp(-20.0 * horizontal_dist)
-            if horizontal_dist <= 2.0 * SUCCESS_THRESHOLD:
-                precision_bonus += np.exp(-VELOCITY_REWARD_DECAY * gripper_speed) * VELOCITY_REWARD_DECAY
+        if horizontal_dist < POSITION_TOLERANCE and grasped:
+            precision_bonus = 3.0 * np.exp(-10.0 * horizontal_dist)
         
-        # 7. Block release reward: one-time bonus/penalty when block is released
+        # 6. In-position reward: bonus for reaching release position
+        position_reward = 0.0
+        if self.in_release_position:
+            position_reward = 2.0  # Bonus for being in release position
+        
+        # 7. Release reward (one-time)
         release_reward = 0.0
         if self.block_released and not self.release_reward_given:
             if horizontal_dist < POSITION_TOLERANCE:
-                release_reward = 10.0  # Bonus for releasing at correct position
+                release_reward = 15.0  # Good release
             else:
-                release_reward = -50.0  # Heavy penalty for releasing while out of position
+                release_reward = -30.0  # Bad release (shouldn't happen with hard constraint)
             self.release_reward_given = True
         
-        # 8. Landing precision reward
+        # 8. Landing reward
         landing_reward = 0.0
         if self.block_landed:
             landing_reward = 20.0 * np.exp(-10.0 * horizontal_dist)
             if horizontal_dist <= SUCCESS_THRESHOLD:
                 landing_reward += 30.0
         
-        # 9. Penalty for dropping block (losing grasp before intentional release)
-        drop_penalty = 0.0
-        if not grasped and not self.block_released and self.initial_grasp_success:
-            drop_penalty = -50.0
+        # 9. Finger reward in release phase
+        finger_reward = 0.0
+        if self.in_release_position and grasped:
+            # Encourage opening fingers when in position
+            if self.prev_finger_distance is not None:
+                finger_change = finger_distance - self.prev_finger_distance
+                if finger_change > 0:
+                    finger_reward = finger_change * 5.0
+        self.prev_finger_distance = finger_distance
         
         # Total reward
-        reward = (base_reward + progress_reward + height_reward + finger_reward + 
-                  velocity_penalty + precision_bonus + release_reward + landing_reward + drop_penalty)
+        reward = (base_reward + progress_reward + height_reward + velocity_penalty + 
+                  precision_bonus + position_reward + release_reward + landing_reward + finger_reward)
 
         # Success criteria: block has landed on ground within threshold distance of target
         terminated = self.block_landed and horizontal_dist <= SUCCESS_THRESHOLD * SUCCESS_RELAXATION_FACTOR
@@ -387,11 +381,12 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
             "block_landed": self.block_landed,
             "progress_reward": progress_reward,
             "height_reward": height_reward,
-            "finger_reward": finger_reward,
             "velocity_penalty": velocity_penalty,
             "precision_bonus": precision_bonus,
+            "position_reward": position_reward,
             "release_reward": release_reward,
             "landing_reward": landing_reward,
+            "finger_reward": finger_reward,
             "velocity": gripper_vel,
             "block_vel_z": block_vel_z
         }
@@ -404,9 +399,8 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
     def reset_model(self):
         """Reset the environment with gripper above target, grasping the block.
         
-        Simulates transition from Stage 3 (lift) with:
-        - Position noise: gripper may not be perfectly above target
-        - Velocity noise: up to 2*SUCCESS_THRESHOLD/s (simulating residual movement from Stage 3)
+        Initialization: Gripper starts above target with small position noise.
+        Velocity is zero for clean learning - Stage 3 should stabilize before transition.
         """
         self.step_count = 0
         self.block_released = False
@@ -440,64 +434,52 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         left_adr = self.model.jnt_qposadr[left_finger_joint]
         right_adr = self.model.jnt_qposadr[right_finger_joint]
 
-        # Position gripper above target with noise (simulating imperfect Stage 3 completion)
-        # Gripper height: hovering above target with small variation
-        gripper_height = TARGET_HEIGHT_ABOVE_TARGET + np.random.uniform(-0.02, 0.02)
+        # Position gripper above target with small noise
+        gripper_height = TARGET_HEIGHT_ABOVE_TARGET + np.random.uniform(-0.01, 0.01)
 
-        # Add position noise - gripper may be slightly off from target center
-        # This simulates transition from Stage 3 where gripper was moving
-        pos_noise_x = np.random.uniform(-POSITION_TOLERANCE, POSITION_TOLERANCE)
-        pos_noise_y = np.random.uniform(-POSITION_TOLERANCE, POSITION_TOLERANCE)
+        # Small position noise - much smaller than before to help initial learning
+        pos_noise_x = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD)
+        pos_noise_y = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD)
 
         # Set gripper position aligned above target with noise
         self.data.qpos[lr_adr] = target_pos[0] + pos_noise_x
         self.data.qpos[fb_adr] = target_pos[1] + pos_noise_y
-        self.data.qpos[ud_adr] = -(0.3 - gripper_height)  # Negative because joint range is -1 to 0
+        self.data.qpos[ud_adr] = -(0.3 - gripper_height)
 
-        # Set fingers to closed position (grasping the block tightly)
-        finger_close_pos = 0.015  # Positive value to close fingers
+        # Set fingers to closed position
+        finger_close_pos = 0.015
         self.data.qpos[left_adr] = finger_close_pos
         self.data.qpos[right_adr] = finger_close_pos
 
-        # Position block at gripper location (being held)
+        # Position block at gripper location
         self.data.qpos[block_adr:block_adr+3] = [
             target_pos[0] + pos_noise_x,
             target_pos[1] + pos_noise_y,
             gripper_height
         ]
-        # Set block orientation to identity
         self.data.qpos[block_adr+3:block_adr+7] = [1, 0, 0, 0]
 
-        # Set finger actuator to maintain closed position initially
-        self.data.ctrl[self.finger] = 0.8  # Strong positive to keep fingers closed
+        # Set finger actuator to maintain closed position
+        self.data.ctrl[self.finger] = 0.8
+
+        # Zero out velocities for clean learning
+        self.data.qvel[:] = 0.0
 
         # Propagate physics
         mujoco.mj_forward(self.model, self.data)
 
-        # Let physics settle for a few steps to ensure grasp
+        # Let physics settle
         for _ in range(20):
-            self.data.ctrl[self.finger] = 0.8  # Keep fingers tight
-            self.data.ctrl[self.updown] = 0.0  # Hold vertical position
-            self.data.ctrl[self.leftright] = 0.0  # Hold horizontal position
+            self.data.ctrl[self.finger] = 0.8
+            self.data.ctrl[self.updown] = 0.0
+            self.data.ctrl[self.leftright] = 0.0
             self.data.ctrl[self.forwardback] = 0.0
             mujoco.mj_step(self.model, self.data)
-        
-        # Add velocity noise to simulate transition from Stage 3
-        # Velocity can be up to 2*SUCCESS_THRESHOLD per second (as per user requirement)
-        vel_scale = 2.0 * SUCCESS_THRESHOLD
-        # Apply velocity to gripper joints (indices for lr, fb, ud)
-        lr_vel_idx = self.model.jnt_dofadr[gripper_lr_joint]
-        fb_vel_idx = self.model.jnt_dofadr[gripper_fb_joint]
-        ud_vel_idx = self.model.jnt_dofadr[gripper_ud_joint]
-        
-        self.data.qvel[lr_vel_idx] = np.random.uniform(-vel_scale, vel_scale)
-        self.data.qvel[fb_vel_idx] = np.random.uniform(-vel_scale, vel_scale)
-        self.data.qvel[ud_vel_idx] = np.random.uniform(-vel_scale * 0.5, vel_scale * 0.5)  # Less vertical velocity
 
         # Check if grasp was successful
         self.initial_grasp_success = self._check_grasped()
 
-        # Get updated positions after settling
+        # Get updated positions
         block_pos = self.data.xpos[self.body][:3]
         gripper_pos = self.data.xpos[self.gripper][:3]
         target_pos = self._get_target_pos()
