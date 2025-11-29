@@ -131,7 +131,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             self.action_space = spaces.Box(low=-1, high=1, shape=(4,), dtype=np.float32)
             # XY adjustments should be MUCH smaller than vertical movement
             # This encourages the gripper to focus on descending first, then small corrections
-            self.ctrl_scale = np.array([1.0, 0.1, 0.1, 1.0], dtype=float)  # [up/down, xy_x (small), xy_y (small), finger]
+            self.ctrl_scale = np.array([1.0, 1.0, 1.0, 1.0], dtype=float)  # [up/down, xy_x (small), xy_y (small), finger]
         else:
             self.action_space = spaces.Box(low=-1, high=1, shape=(2,), dtype=np.float32)
             self.ctrl_scale = np.array([1.0, 1.0], dtype=float)  # [up/down, finger]
@@ -141,10 +141,6 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             shape=(obs_dim,), dtype=np.float32
         )
         
-        # Finger control range
-        # Start with fingers more open (like gripper raised higher in position stage)
-        self.finger_open = -0.05  # More open (negative = more open based on joint range)
-        self.finger_close = 3.0
         
         # Note: Gripper now stays at default position (no initial_height used)
         # Block is placed below gripper with slight horizontal offset
@@ -278,20 +274,13 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             # Small XY adjustments (scale already applied in ctrl_scale)
             self.data.ctrl[self.leftright] = action_scaled[1]
             self.data.ctrl[self.forwardback] = action_scaled[2]
-            # Finger control: map from [-1, 1] to [finger_open, finger_close]
-            # action[3] is in [-1, 1], normalize to [0, 1] first
-            finger_normalized = (action[3] + 1.0) / 2.0  # [0, 1]
-            finger_control = self.finger_open + finger_normalized * (self.finger_close - self.finger_open)
-            self.data.ctrl[self.finger] = finger_control
+            self.data.ctrl[self.finger] = action_scaled[3]
         else:
             # [up/down, finger] - no XY movement
             self.data.ctrl[self.updown] = action_scaled[0]
             self.data.ctrl[self.leftright] = 0.0  # Keep centered
             self.data.ctrl[self.forwardback] = 0.0  # Keep centered
-            # Finger control: map from [-1, 1] to [finger_open, finger_close]
-            finger_normalized = (action[1] + 1.0) / 2.0  # [0, 1]
-            finger_control = self.finger_open + finger_normalized * (self.finger_close - self.finger_open)
-            self.data.ctrl[self.finger] = finger_control
+            self.data.ctrl[self.finger] = action_scaled[1]
 
         # Advance physics
         for _ in range(10):
@@ -307,7 +296,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         rel = block_xyz - gripper_xyz
         
         # Vertical distance (positive = gripper above block)
-        vertical_dist = gripper_xyz[2] - block_xyz[2]
+        vertical_dist = gripper_xyz[2] - (block_xyz[2] + 0.01)
         
         # Horizontal distance (should be small since we start aligned)
         horizontal_dist = np.linalg.norm(block_xy - gripper_xy)
@@ -430,7 +419,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             horizontal_change = horizontal_dist - self.prev_horizontal_dist  # Positive = moving away
             if horizontal_change > 0:
                 # Penalize moving away from the block (strong penalty)
-                horizontal_penalty = -horizontal_change * 20.0
+                horizontal_penalty = -horizontal_change * 3.0
             elif horizontal_change < 0:
                 # Reward getting closer to centered (centering bonus)
                 horizontal_centering_reward = -horizontal_change * 3.0  # Negative change = positive reward
@@ -449,15 +438,15 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             reward += 1.0 * (0.1 - gripper_height) / 0.1
         
         # Precision bonus: exponential reward as agent gets very close to grasping position
-        precision_bonus = 0.0
+        precision_bonus = -5.0 * (np.exp(2.0 * horizontal_dist) - 1.0)  # Penalize horizontal distance exponentially
         if 0.01 <= vertical_dist <= 0.05:  # Good grasping height range
             # Exponential bonus for being in the right height range
-            precision_bonus = 3.0 * np.exp(-10.0 * abs(vertical_dist - 0.03))  # Peak at 0.03
+            precision_bonus = 2.0 * np.exp(-10.0 * abs(vertical_dist - 0.03))  # Peak at 0.03
             
-            # Extra bonus for low velocity when at good height (stable approach)
-            vel_magnitude = np.linalg.norm(gripper_vel)
-            if vel_magnitude < 0.01:  # Very slow/stable
-                precision_bonus += 2.0 * np.exp(-100.0 * vel_magnitude)
+        # Extra bonus for low velocity when at good height (stable approach)
+        vel_magnitude = np.linalg.norm(gripper_vel[:2])
+        #if vel_magnitude < 0.01:  # Very slow/stable
+        precision_bonus += 2.0 * np.exp(-2.0 * vel_magnitude)
         
         # Reward for ground contact (critical for success)
         if ground_contact:
@@ -518,7 +507,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         reward -= 0.01
         
         # Termination
-        terminated = grasped
+        terminated = grasped and vel_magnitude < SUCCESS_THRESHOLD * 2.0
         truncated = self.step_count >= self.max_steps
         
         info = {
@@ -571,6 +560,8 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
 
         left_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "left_slide")
         left_adr = self.model.jnt_qposadr[left_finger_joint]
+        right_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "right_slide")
+        right_adr = self.model.jnt_qposadr[right_finger_joint]
         
         # Forward pass to get gripper position from default qpos
         mujoco.mj_forward(self.model, self.data)
@@ -599,13 +590,14 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         self.data.qpos[block_adr+3:block_adr+7] = [1, 0, 0, 0]  # Identity quaternion
 
         # Set fingers to open position
-        self.data.qpos[left_adr] = self.finger_open
+        self.data.qpos[left_adr] = np.random.uniform(-0.06, -0.05)
+        self.data.qpos[right_adr] = self.data.qpos[left_adr]
 
         # Set controls to neutral to avoid initial velocity
         self.data.ctrl[self.updown] = 0.0
         self.data.ctrl[self.leftright] = 0.0
         self.data.ctrl[self.forwardback] = 0.0
-        self.data.ctrl[self.finger] = self.finger_open
+        self.data.ctrl[self.finger] = 0.0
         
         # Propagate physics
         mujoco.mj_forward(self.model, self.data)
