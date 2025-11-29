@@ -6,6 +6,7 @@ gripper_mj/checkpoints/
 gripper_mj/checkpoints_lift/
 gripper_mj/videos/
 gripper_mj/videos_lift/
+gripper_mj/videos_release/
 gripper_mj/test/
 **/checkpoints/
 # Model checkpoint files
