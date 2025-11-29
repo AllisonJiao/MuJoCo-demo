@@ -29,7 +29,7 @@ FINGER_CLOSE_COMMAND = 0.8  # Actuator command to close fingers
 FINGER_CLOSE_POSITION = 0.015  # Joint position for closed fingers
 
 # Initialization parameters - target offset range (gripper stays fixed)
-TARGET_OFFSET_RANGE = 0.15  # Horizontal offset range for target from gripper center
+TARGET_OFFSET_RANGE = SUCCESS_THRESHOLD  # Horizontal offset range for target from gripper center
 
 # Block landing detection
 BLOCK_ON_GROUND_HEIGHT = BLOCK_DIMENSION + 0.01  # Block resting on ground (with small tolerance)
@@ -400,9 +400,9 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
 
         # Set finger actuator to maintain closed position
         self.data.ctrl[self.finger] = FINGER_CLOSE_COMMAND
-        self.data.ctrl[self.updown] = 0.0
-        self.data.ctrl[self.leftright] = 0.0
-        self.data.ctrl[self.forwardback] = 0.0
+        self.data.ctrl[self.updown] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 2.0
+        self.data.ctrl[self.leftright] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 2.0
+        self.data.ctrl[self.forwardback] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 2.0
 
         # Propagate physics to get proper contact
         mujoco.mj_forward(self.model, self.data)
@@ -414,6 +414,13 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
             self.data.ctrl[self.leftright] = 0.0
             self.data.ctrl[self.forwardback] = 0.0
             mujoco.mj_step(self.model, self.data)
+        
+        # Set finger actuator to maintain closed position
+        self.data.ctrl[self.finger] = FINGER_CLOSE_COMMAND
+        self.data.ctrl[self.updown] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 0.0
+        self.data.ctrl[self.leftright] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 0.0
+        self.data.ctrl[self.forwardback] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 0.0
+
 
         # Check if grasp was successful
         self.initial_grasp_success = self._check_grasped()
