@@ -14,7 +14,7 @@ from gripper_grasp_env_improved import GripperGraspEnv, MAX_STEPS as GRASP_MAX_S
 TRAIN_EPS = 100000
 VALID_EPS = 10
 VALID_MAX_STEPS_POSITION = 500
-VALID_MAX_STEPS_GRASP = 200  # Shorter episodes for grasping task
+VALID_MAX_STEPS_GRASP = 500  # Shorter episodes for grasping task
 
 # Checkpoint configuration
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints")
