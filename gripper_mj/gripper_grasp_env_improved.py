@@ -303,12 +303,17 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         # Horizontal distance (should be small since we start aligned)
         horizontal_dist = np.linalg.norm(block_xy - gripper_xy)
         
-        # Get finger state
+        # Get finger state - use left_slide qpos directly
+        # qpos = -0.05 means OPEN (gap ~0.21), qpos = +0.02 means CLOSED (gap ~0.07)
         left_slide_joint_id = self.model.joint("left_slide").id
-        right_slide_joint_id = self.model.joint("right_slide").id
         left_slide_adr = self.model.jnt_qposadr[left_slide_joint_id]
-        right_slide_adr = self.model.jnt_qposadr[right_slide_joint_id]
-        finger_dist = np.abs(self.data.qpos[left_slide_adr] - self.data.qpos[right_slide_adr])
+        finger_qpos = self.data.qpos[left_slide_adr]
+        
+        # Calculate finger openness: 1.0 = open (qpos=-0.05), 0.0 = closed (qpos=0.02)
+        FINGER_QPOS_OPEN = -0.05
+        FINGER_QPOS_CLOSED = 0.02
+        finger_openness = (FINGER_QPOS_CLOSED - finger_qpos) / (FINGER_QPOS_CLOSED - FINGER_QPOS_OPEN)
+        finger_openness = np.clip(finger_openness, 0.0, 1.0)
         
         # Check if grasped
         grasped = self._check_grasped()
@@ -338,14 +343,12 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         
         # Build observation with normalized values and velocities
         # Use RELATIVE displacement between gripper and block
-        # Position 8 uses vertical_dist (relative height) instead of absolute gripper_z
-        # This avoids the issue where gripper position varies but relative geometry is what matters
         if self.allow_xy_adjust:
             obs = np.concatenate([
                 rel / 0.5,  # Normalized relative position [x, y, z] (block - gripper)
                 np.array([vertical_dist]),  # Vertical distance (gripper above block)
                 np.array([horizontal_dist]),  # Horizontal distance
-                np.array([finger_dist]),  # Finger state
+                np.array([finger_openness]),  # Finger openness (1=open, 0=closed)
                 np.array([float(grasped)]),  # Grasped indicator
                 np.array([float(ground_contact_obs)]),  # Ground contact indicator
                 np.array([vertical_dist]),  # Relative height (replaces absolute gripper_z)
@@ -356,7 +359,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             obs = np.concatenate([
                 np.array([rel[2] / 0.5]),  # Normalized relative z
                 np.array([vertical_dist]),  # Vertical distance
-                np.array([finger_dist]),  # Finger state
+                np.array([finger_openness]),  # Finger openness (1=open, 0=closed)
                 np.array([float(grasped)]),  # Grasped indicator
                 np.array([float(ground_contact_obs)]),  # Ground contact indicator
                 np.array([vertical_dist]),  # Relative height (replaces absolute gripper_z)
@@ -365,22 +368,18 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             ], dtype=np.float32)
 
         # ============================================================
-        # SIMPLIFIED REWARD FUNCTION
-        # Key principles:
-        # 1. Descend with fingers OPEN
-        # 2. Only close fingers when at grasping height
-        # 3. Stay horizontally centered over block
-        # 4. Uniform scale (all rewards/penalties in similar range)
-        # 5. Penalize fingers touching ground (going too low)
-        # 6. Penalize moving away from block
-        # 7. Penalize excessive velocity (swinging)
+        # SIMPLE REWARD FUNCTION
+        # Focus on 3 tasks:
+        # 1. Maintain horizontal precision (stay centered over block)
+        # 2. Lower gripper to proper height
+        # 3. Open fingers above ideal height, close at ideal height
         # ============================================================
         
         reward = 0.0
         
-        # Get contact status
+        # Get contact status for termination check
         ground_contact = False
-        finger_ground_contact = False  # Track if fingers specifically touch ground
+        finger_ground_contact = False
         left_finger_block_contact = False
         right_finger_block_contact = False
         
@@ -403,160 +402,79 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
                     right_finger_block_contact = True
             
             if body1 == self.floor_body:
-                if body2 in [self.body, self.gripper, self.left_finger, self.right_finger]:
-                    ground_contact = True
                 if body2 in [self.left_finger, self.right_finger]:
                     finger_ground_contact = True
-            elif body2 == self.floor_body:
-                if body1 in [self.body, self.gripper, self.left_finger, self.right_finger]:
+                if body2 in [self.body, self.gripper, self.left_finger, self.right_finger]:
                     ground_contact = True
+            elif body2 == self.floor_body:
                 if body1 in [self.left_finger, self.right_finger]:
                     finger_ground_contact = True
+                if body1 in [self.body, self.gripper, self.left_finger, self.right_finger]:
+                    ground_contact = True
         
         gripper_height = gripper_xyz[2]
         both_fingers_contact = left_finger_block_contact and right_finger_block_contact
         
-        # Define grasping height threshold based on geometry
-        FINGER_BOTTOM_OFFSET = 0.08  # Finger half-extent in z direction
-        MIN_GRIPPER_HEIGHT = 0.10  # Minimum safe height (finger bottom at 0.02)
-        TARGET_GRIPPER_HEIGHT = 0.14  # Ideal gripper height for grasping (finger bottom at 0.06)
-        GRASP_HEIGHT_THRESHOLD = 0.08  # vertical_dist threshold for grabbing
-        MAX_HORIZONTAL_DIST = 0.1  # Max allowed horizontal distance before heavy penalty
+        # Height thresholds
+        IDEAL_HEIGHT = 0.14  # Ideal gripper height for grasping
+        MIN_HEIGHT = 0.10    # Minimum safe height
         
-        at_grasp_height = vertical_dist <= GRASP_HEIGHT_THRESHOLD
+        # Check if at ideal grasping height
+        at_ideal_height = gripper_height <= IDEAL_HEIGHT and gripper_height >= MIN_HEIGHT
         
-        # finger_state: negative = open, positive = closed
-        finger_openness = (finger_dist - FINGER_GAP_CLOSED) / (FINGER_GAP_OPEN - FINGER_GAP_CLOSED)
-        finger_openness = np.clip(finger_openness, 0.0, 1.0)
+        # finger_openness is already calculated above (1.0 = open, 0.0 = closed)
         
-        # ============================================================
-        # REWARD COMPONENT 1: Progress toward block (scale: -1 to +1)
-        # Reward getting closer to block, penalize moving away
-        # ============================================================
-        # Calculate 3D distance to block center
-        dist_to_block = np.sqrt(horizontal_dist**2 + vertical_dist**2)
-        
-        if self.prev_horizontal_dist is not None and self.prev_vertical_dist is not None:
-            prev_dist = np.sqrt(self.prev_horizontal_dist**2 + self.prev_vertical_dist**2)
-            # Positive if moving closer, negative if moving away
-            progress = (prev_dist - dist_to_block) * 1.0  # Scale for visibility
-            progress = np.clip(progress, -1.0, 1.0)
-        else:
-            progress = 0.0
-        reward += progress
-        
-        # Update previous values
+        # Update previous values for next step
         self.prev_gripper_height = gripper_height
         self.prev_vertical_dist = vertical_dist
         self.prev_horizontal_dist = horizontal_dist
         
         # ============================================================
-        # REWARD COMPONENT 2: Horizontal centering (scale: -2 to 0)
-        # STRONG penalty for being far from block horizontally
-        # This is a continuous penalty that increases with distance
+        # REWARD 1: Horizontal precision (scale: -1 to 0)
+        # Penalize being off-center from block
         # ============================================================
-        if horizontal_dist > MAX_HORIZONTAL_DIST:
-            # Very far - heavy penalty
-            horizontal_penalty = -2.0
-        else:
-            # Linear penalty based on horizontal distance
-            horizontal_penalty = -2.0 * (horizontal_dist / MAX_HORIZONTAL_DIST)
+        horizontal_penalty = -horizontal_dist * 10.0  # Scale: ~0.02m offset = -0.2
+        horizontal_penalty = np.clip(horizontal_penalty, -1.0, 0.0)
         reward += horizontal_penalty
         
         # ============================================================
-        # REWARD COMPONENT 3: Velocity penalty (scale: -1 to 0)
-        # Penalize excessive horizontal velocity (swinging behavior)
-        # Also penalize excessive vertical velocity when near target
+        # REWARD 2: Height reward (scale: -1 to +1)
+        # Reward being at ideal height, penalize being too high/low
         # ============================================================
-        horizontal_vel = np.linalg.norm(gripper_vel[:2])
-        vertical_vel = gripper_vel[2]
-        
-        # Horizontal velocity penalty - always penalize swinging
-        horizontal_vel_penalty = -2.0 * (np.exp(5.0*horizontal_vel) - 1.0)
-        #horizontal_vel_penalty = np.clip(horizontal_vel_penalty, -1.0, 0.0)
-        reward += horizontal_vel_penalty
-        
-        # Vertical velocity penalty - penalize moving UP (wasting time)
-        # and excessive downward velocity near target height
-        if vertical_vel > 0.00:  # Moving up
-            vertical_vel_penalty = -vertical_vel * 3.0  # Penalize moving up
-            #vertical_vel_penalty = np.clip(vertical_vel_penalty, -1.0, 0.0)
-            reward += vertical_vel_penalty
-        elif gripper_height < TARGET_GRIPPER_HEIGHT + 0.05:  # Near target
-            # Penalize excessive downward velocity when approaching target
-            downward_vel = -vertical_vel if vertical_vel < 0 else 0
-            if downward_vel > 0.05:  # Threshold for "fast" descent
-                vertical_vel_penalty = -(downward_vel - 0.05) * 5.0
-                vertical_vel_penalty = np.clip(vertical_vel_penalty, -1.0, 0.0)
-                reward += vertical_vel_penalty
-        
-        # ============================================================
-        # REWARD COMPONENT 4: Finger behavior (scale: -2 to +0.5)
-        # ONLY reward open fingers while ABOVE grasping height
-        # Reward closing at grasping height
-        # REDUCED finger-open reward to prevent exploitation
-        # ============================================================
-        if at_grasp_height:
-            # At grasping height: reward closing fingers
-            finger_reward = 2.0 * (1.0 - finger_openness)
-        else:
-            # Still descending: want fingers open
-            finger_reward = 10.0 * max(0.0, finger_openness-0.75)
-            # Small reward for open, penalty for closed
-            if finger_openness < 0.75:
-                self.proper_descent = False
-        reward += finger_reward
-        
-        # ============================================================
-        # REWARD COMPONENT 5: Height-based reward (scale: 0 to 0.5)
-        # Reward being at good grasping height (not too high, not too low)
-        # ============================================================
-        if gripper_height > TARGET_GRIPPER_HEIGHT:
-            # Above target - reward progress down
-            height_reward = 2.0 * (0.3 - gripper_height) / (0.3 - TARGET_GRIPPER_HEIGHT)
+        if gripper_height > IDEAL_HEIGHT:
+            # Above ideal: reward progress downward
+            height_reward = 1.0 - (gripper_height - IDEAL_HEIGHT) / (0.3 - IDEAL_HEIGHT)
             height_reward = np.clip(height_reward, 0.0, 1.0)
-        elif gripper_height >= MIN_GRIPPER_HEIGHT:
-            # At good height
-            height_reward = 0.5
+        elif gripper_height >= MIN_HEIGHT:
+            # At ideal height range
+            height_reward = 1.0
         else:
-            # Too low - penalize
+            # Below minimum: penalize
             height_reward = -1.0
         reward += height_reward
         
         # ============================================================
-        # REWARD COMPONENT 6: Finger ground contact penalty (scale: -3)
+        # REWARD 3: Finger behavior (scale: -1 to +1)
+        # Open fingers above ideal height, close at/below ideal height
         # ============================================================
-        if finger_ground_contact:
-            reward -= 3.0
+        if at_ideal_height:
+            # At ideal height: reward CLOSED fingers
+            finger_reward = 1.0 - finger_openness  # 1.0 when closed, 0.0 when open
+        else:
+            # Above ideal height: reward OPEN fingers
+            finger_reward = finger_openness  # 1.0 when open, 0.0 when closed
+        reward += finger_reward
         
         # ============================================================
-        # REWARD COMPONENT 7: Contact rewards (scale: 0 to 1)
-        # Only reward contact if gripper descended properly AND is centered
+        # REWARD 4: Success bonus (+5)
         # ============================================================
-        contact_reward = 0.0
-        if at_grasp_height and self.proper_descent and not finger_ground_contact and horizontal_dist < 0.03:
-            if left_finger_block_contact:
-                contact_reward += 0.25
-            if right_finger_block_contact:
-                contact_reward += 0.25
-            if both_fingers_contact:
-                contact_reward += 0.5
-        reward += contact_reward
-        
-        # ============================================================
-        # REWARD COMPONENT 8: Success reward (scale: +5)
-        # Large reward for successful grasp
-        # ============================================================
-        if grasped and self.proper_descent:
+        if grasped:
             reward += 5.0
         
-        # ============================================================
-        # Small step penalty to encourage efficiency (scale: -0.01)
-        # ============================================================
+        # Small step penalty
         reward -= 0.01
         
         # Termination
-        vel_magnitude = np.linalg.norm(gripper_vel[:2])
         terminated = grasped
         truncated = self.step_count >= self.max_steps
         
@@ -564,22 +482,18 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             "grasped": grasped,
             "vertical_dist": vertical_dist,
             "horizontal_dist": horizontal_dist,
-            "finger_state": finger_dist,
+            "finger_qpos": finger_qpos,
             "finger_openness": finger_openness,
-            "at_grasp_height": at_grasp_height,
-            "proper_descent": self.proper_descent,
+            "at_ideal_height": at_ideal_height,
             "ground_contact": ground_contact,
+            "finger_ground_contact": finger_ground_contact,
             "left_finger_contact": left_finger_block_contact,
             "right_finger_contact": right_finger_block_contact,
             "both_fingers_contact": both_fingers_contact,
             "gripper_height": gripper_height,
-            "progress_reward": progress,
             "horizontal_penalty": horizontal_penalty,
-            "horizontal_vel_penalty": horizontal_vel_penalty,
-            "finger_reward": finger_reward,
             "height_reward": height_reward,
-            "contact_reward": contact_reward,
-            "finger_ground_contact": finger_ground_contact,
+            "finger_reward": finger_reward,
             "gripper_velocity": gripper_vel
         }
 
@@ -666,11 +580,16 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         
         vertical_dist = gripper_xyz[2] - block_xyz[2]
         horizontal_dist = np.linalg.norm(block_xy - gripper_xy)
+        
+        # Get finger openness
         left_slide_joint_id = self.model.joint("left_slide").id
-        right_slide_joint_id = self.model.joint("right_slide").id
         left_slide_adr = self.model.jnt_qposadr[left_slide_joint_id]
-        right_slide_adr = self.model.jnt_qposadr[right_slide_joint_id]
-        finger_dist = np.abs(self.data.qpos[left_slide_adr] - self.data.qpos[right_slide_adr])
+        finger_qpos = self.data.qpos[left_slide_adr]
+        FINGER_QPOS_OPEN = -0.05
+        FINGER_QPOS_CLOSED = 0.02
+        finger_openness = (FINGER_QPOS_CLOSED - finger_qpos) / (FINGER_QPOS_CLOSED - FINGER_QPOS_OPEN)
+        finger_openness = np.clip(finger_openness, 0.0, 1.0)
+        
         grasped = False
         
         # Check ground contact for observation (at reset, should be False)
@@ -693,13 +612,12 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         self.prev_horizontal_dist = horizontal_dist
         
         # Use RELATIVE displacement between gripper and block
-        # Position 8/5 uses vertical_dist (relative height) instead of absolute gripper_z
         if self.allow_xy_adjust:
             obs = np.concatenate([
                 rel / 0.5,  # Normalized relative position (block - gripper)
                 np.array([vertical_dist]),  # Vertical distance (gripper above block)
                 np.array([horizontal_dist]),
-                np.array([finger_dist]),
+                np.array([finger_openness]),  # Finger openness (1=open, 0=closed)
                 np.array([float(grasped)]),
                 np.array([float(ground_contact_obs)]),
                 np.array([vertical_dist]),  # Relative height (replaces absolute gripper_z)
@@ -710,7 +628,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             obs = np.concatenate([
                 np.array([rel[2] / 0.5]),  # Normalized relative z
                 np.array([vertical_dist]),  # Vertical distance (gripper above block)
-                np.array([finger_dist]),
+                np.array([finger_openness]),  # Finger openness (1=open, 0=closed)
                 np.array([float(grasped)]),
                 np.array([float(ground_contact_obs)]),
                 np.array([vertical_dist]),  # Relative height (replaces absolute gripper_z)
@@ -730,13 +648,15 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         vertical_dist = gripper_xyz[2] - block_xyz[2]
         horizontal_dist = np.linalg.norm(block_xy - gripper_xy)
         
+        # Get finger openness
         left_slide_joint_id = self.model.joint("left_slide").id
         left_slide_adr = self.model.jnt_qposadr[left_slide_joint_id]
-        left_slide_joint_id = self.model.joint("left_slide").id
-        right_slide_joint_id = self.model.joint("right_slide").id
-        left_slide_adr = self.model.jnt_qposadr[left_slide_joint_id]
-        right_slide_adr = self.model.jnt_qposadr[right_slide_joint_id]
-        finger_dist = np.abs(self.data.qpos[left_slide_adr] - self.data.qpos[right_slide_adr])
+        finger_qpos = self.data.qpos[left_slide_adr]
+        FINGER_QPOS_OPEN = -0.05
+        FINGER_QPOS_CLOSED = 0.02
+        finger_openness = (FINGER_QPOS_CLOSED - finger_qpos) / (FINGER_QPOS_CLOSED - FINGER_QPOS_OPEN)
+        finger_openness = np.clip(finger_openness, 0.0, 1.0)
+        
         grasped = self._check_grasped()
         
         # Check ground contact for observation
@@ -766,13 +686,12 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         rel = block_xyz - gripper_xyz
         
         # Use RELATIVE displacement between gripper and block
-        # Position 8/5 uses vertical_dist (relative height) instead of absolute gripper_z
         if self.allow_xy_adjust:
             return np.concatenate([
                 rel / 0.5,  # Normalized relative position (block - gripper)
                 np.array([vertical_dist]),  # Vertical distance (gripper above block)
                 np.array([horizontal_dist]),
-                np.array([finger_dist]),
+                np.array([finger_openness]),  # Finger openness (1=open, 0=closed)
                 np.array([float(grasped)]),
                 np.array([float(ground_contact_obs)]),
                 np.array([vertical_dist]),  # Relative height (replaces absolute gripper_z)
@@ -783,7 +702,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             return np.concatenate([
                 np.array([rel[2] / 0.5]),  # Normalized relative z
                 np.array([vertical_dist]),  # Vertical distance (gripper above block)
-                np.array([finger_dist]),
+                np.array([finger_openness]),  # Finger openness (1=open, 0=closed)
                 np.array([float(grasped)]),
                 np.array([float(ground_contact_obs)]),
                 np.array([vertical_dist]),  # Relative height (replaces absolute gripper_z)
