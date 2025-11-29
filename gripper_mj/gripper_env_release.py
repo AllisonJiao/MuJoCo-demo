@@ -8,7 +8,6 @@ from mujoco_py_env import MuJocoPyEnv
 
 import numpy as np
 import mujoco
-from gripper_controller import rand_spawn
 
 BLOCK_DIMENSION = 0.05
 SUCCESS_THRESHOLD = BLOCK_DIMENSION * 0.5  # Horizontal distance threshold for block landing on target
@@ -29,18 +28,26 @@ FINGER_GAP_OPEN = BLOCK_DIMENSION + 2 * FINGER_WIDTH + 0.02  # Gap when fingers 
 FINGER_CLOSE_COMMAND = 0.8  # Actuator command to close fingers
 FINGER_CLOSE_POSITION = 0.015  # Joint position for closed fingers
 
-# Initialization parameters
-INITIAL_POSITION_NOISE_RANGE = SUCCESS_THRESHOLD  # Range for initial position noise
-INITIAL_HEIGHT_NOISE = 0.01  # Range for initial height noise
+# Initialization parameters - target offset range (gripper stays fixed)
+TARGET_OFFSET_RANGE = 0.15  # Horizontal offset range for target from gripper center
 
 # Block landing detection
 BLOCK_ON_GROUND_HEIGHT = BLOCK_DIMENSION + 0.01  # Block resting on ground (with small tolerance)
 
+# Default gripper height (from XML model - gripper starts at z=0.3)
+DEFAULT_GRIPPER_HEIGHT = TARGET_HEIGHT_ABOVE_TARGET  # Gripper height above ground
+
 """
 Release Environment - Stage 4 of the gripper task.
 
+NEW APPROACH: Fixed gripper position, randomized target below
+- Gripper stays at default position (no joint position changes that cause velocity)
+- Target is placed below gripper with horizontal offset noise
+- Block is held by gripper at fixed position
+- Observation uses RELATIVE displacements (gripper-to-target)
+
 SIMPLIFIED reward structure:
-1. Position reward: Move toward target horizontally
+1. Position reward: Move toward target horizontally (using relative displacement)
 2. Height reward: Maintain proper height
 3. Finger reward: Open when in position, keep closed otherwise  
 4. Landing reward: Block landing close to target
@@ -62,10 +69,12 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
     def __init__(self, render_mode=None, width=480, height=480, **kwargs):
         utils.EzPickle.__init__(self, render_mode=render_mode, width=width, height=height, **kwargs)
 
-        # Observation: [rel_block_to_target_dx, rel_block_to_target_dy, rel_block_to_target_dz,
-        #               gripper_z, horizontal_dist_block_to_target, block_z,
-        #               finger_distance, gripper_vel_x, gripper_vel_y, block_vel_z, grasped]
-        observation_space = Box(low=-np.inf, high=np.inf, shape=(11,), dtype=np.float32)
+        # Observation: [rel_gripper_to_target_dx, rel_gripper_to_target_dy, 
+        #               gripper_height_above_target, horizontal_dist_gripper_to_target,
+        #               block_height_above_ground, finger_distance, 
+        #               gripper_vel_x, gripper_vel_y, block_vel_z, grasped]
+        # All positions are RELATIVE to simplify learning
+        observation_space = Box(low=-np.inf, high=np.inf, shape=(10,), dtype=np.float32)
 
         folder_path = os.path.dirname(os.path.abspath(__file__))
         model_path = os.path.join(folder_path, os.pardir, "model", "GripperGPT.xml")
@@ -100,7 +109,7 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
 
         # action = 4 motors [up/down, left/right, forward/back, finger]
         self.action_space = spaces.Box(low=-1, high=1, shape=(4,), dtype=np.float32)
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(11,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(10,), dtype=np.float32)
 
         # Control scaling
         self.ctrl_scale = np.array([1.0, 1.0, 1.0, 1.0], dtype=float)
@@ -160,11 +169,11 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         action_clipped = np.clip(action, -1, 1)
         scaled_action = action_clipped * self.ctrl_scale
 
-        # Apply actions to actuators (no hard constraint - agent has full control)
-        self.data.ctrl[self.updown] = 0.0 * scaled_action[0]
-        self.data.ctrl[self.leftright] = 0.0 * scaled_action[1]
-        self.data.ctrl[self.forwardback] = 0.0 * scaled_action[2]
-        self.data.ctrl[self.finger] = 0.0 * scaled_action[3]
+        # Apply actions to actuators (agent has full control)
+        self.data.ctrl[self.updown] = scaled_action[0]
+        self.data.ctrl[self.leftright] = scaled_action[1]
+        self.data.ctrl[self.forwardback] = scaled_action[2]
+        self.data.ctrl[self.finger] = scaled_action[3]
         
         # Advance physics
         for i in range(1, 10):
@@ -190,12 +199,13 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         if self.block_released and block_on_ground:
             self.block_landed = True
 
-        # Distance metrics (block to target)
-        rel_to_target = target_pos - block_pos
-        horizontal_dist = np.linalg.norm((block_pos - target_pos)[:2])
+        # RELATIVE distance metrics (gripper to target for positioning)
+        rel_gripper_to_target = target_pos - gripper_pos  # Relative displacement vector
+        horizontal_dist = np.linalg.norm((gripper_pos - target_pos)[:2])  # Horizontal distance gripper-to-target
         
-        # Height of block above target
-        block_height_above_target = float(block_pos[2] - target_pos[2])
+        # Height above target (for maintaining proper hover height)
+        gripper_height_above_target = float(gripper_pos[2] - target_pos[2])
+        block_height_above_ground = float(block_pos[2])  # For tracking block landing
 
         # Get velocities
         try:
@@ -216,11 +226,12 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
 
         gripper_speed = np.linalg.norm(gripper_vel)
 
+        # Observation: ALL RELATIVE positions
         obs = np.concatenate([
-            rel_to_target / 0.5,  # Normalized relative position (block to target)
-            np.array([gripper_pos[2]]),  # Absolute gripper z
+            rel_gripper_to_target[:2] / 0.5,  # Normalized relative XY displacement (gripper to target)
+            np.array([gripper_height_above_target]),  # Height of gripper above target
             np.array([horizontal_dist]),  # Horizontal distance to target
-            np.array([block_pos[2]]),  # Block z
+            np.array([block_height_above_ground]),  # Block absolute height (for landing detection)
             np.array([finger_distance]),  # Finger distance
             gripper_vel,  # Gripper XY velocity
             np.array([block_vel_z]),  # Block vertical velocity
@@ -233,9 +244,9 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         
         reward = 0.0
         
-        # Check if in release position
+        # Check if in release position (using gripper height since we're positioning gripper over target)
         position_ok = horizontal_dist <= POSITION_TOLERANCE
-        height_error = abs(block_height_above_target - TARGET_HEIGHT_ABOVE_TARGET)
+        height_error = abs(gripper_height_above_target - TARGET_HEIGHT_ABOVE_TARGET)
         height_ok = height_error < HEIGHT_TOLERANCE
         velocity_ok = gripper_speed < VELOCITY_TOLERANCE
         in_release_position = position_ok and height_ok and velocity_ok and grasped
@@ -253,14 +264,14 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         if horizontal_dist < 3 * SUCCESS_THRESHOLD and grasped:
             position_reward += 3.0 * np.exp(-20.0 * horizontal_dist)
         
-        # 2. HEIGHT REWARD (like lift_improved)
+        # 2. HEIGHT REWARD (using gripper height above target)
         height_reward = 0.0
         if grasped:
             height_reward = -height_error * 3.0
             
             # Penalty for too low
-            if block_height_above_target < MIN_ABOVE_TARGET:
-                height_reward -= 10.0 * (MIN_ABOVE_TARGET - block_height_above_target)
+            if gripper_height_above_target < MIN_ABOVE_TARGET:
+                height_reward -= 10.0 * (MIN_ABOVE_TARGET - gripper_height_above_target)
         
         # 3. FINGER REWARD - simple: open when in position, closed otherwise
         finger_reward = 0.0
@@ -285,29 +296,31 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
                 else:
                     finger_reward = 0.5  # Small bonus for keeping closed
         
-        # 4. LANDING REWARD (one-time)
+        # 4. LANDING REWARD (one-time) - based on where block lands relative to target
         landing_reward = 0.0
+        block_to_target_dist = np.linalg.norm((block_pos - target_pos)[:2])
         if self.block_landed:
-            # Distance-based reward
-            landing_reward = 50.0 * np.exp(-10.0 * horizontal_dist)
-            if horizontal_dist <= SUCCESS_THRESHOLD:
+            # Distance-based reward for block landing close to target
+            landing_reward = 50.0 * np.exp(-10.0 * block_to_target_dist)
+            if block_to_target_dist <= SUCCESS_THRESHOLD:
                 landing_reward += 100.0  # Big bonus for accurate landing
         
         # Total reward
         reward = position_reward + height_reward + finger_reward + landing_reward
 
-        # Success criteria
-        terminated = self.block_landed and horizontal_dist <= SUCCESS_THRESHOLD * SUCCESS_RELAXATION_FACTOR
+        # Success criteria - block must land within threshold of target
+        terminated = self.block_landed and block_to_target_dist <= SUCCESS_THRESHOLD * SUCCESS_RELAXATION_FACTOR
 
         if terminated:
             reward += 50.0  # Success bonus
 
-        truncated = self.step_count >= self.max_steps or (self.block_landed and horizontal_dist > SUCCESS_THRESHOLD * SUCCESS_RELAXATION_FACTOR)
+        truncated = self.step_count >= self.max_steps or (self.block_landed and block_to_target_dist > SUCCESS_THRESHOLD * SUCCESS_RELAXATION_FACTOR)
 
         info = {
-            "horizontal_dist": horizontal_dist,
+            "horizontal_dist": horizontal_dist,  # Gripper to target
+            "block_to_target_dist": block_to_target_dist,  # Block to target (for landing)
             "block_z": block_pos[2],
-            "block_height": block_height_above_target,
+            "gripper_height_above_target": gripper_height_above_target,
             "gripper_z": gripper_pos[2],
             "finger_distance": finger_distance,
             "grasped": grasped,
@@ -328,10 +341,13 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         return obs, reward, terminated, truncated, info
 
     def reset_model(self):
-        """Reset the environment with gripper above target, grasping the block.
+        """Reset the environment with FIXED gripper position, target below with horizontal offset.
         
-        Initialization: Gripper starts above target with small position noise.
-        Velocity is zero for clean learning - Stage 3 should stabilize before transition.
+        NEW APPROACH:
+        - Gripper stays at default position (no joint changes that cause velocity drift)
+        - Target is placed below gripper with random horizontal offset
+        - Block is positioned at gripper location, held by closed fingers
+        - All observations use relative displacements
         """
         self.step_count = 0
         self.block_released = False
@@ -341,73 +357,63 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         self.prev_horizontal_dist = None
         self.release_reward_given = False
 
-        # Randomize target position
-        rand_spawn(self.model, self.data)
-
-        # Get target position after randomization
-        target_pos = self._get_target_pos().copy()
-
+        # Reset simulation to initial state (this gives us default gripper position)
+        mujoco.mj_resetData(self.model, self.data)
+        
         # Get joint addresses
         block_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "block_free")
         block_adr = self.model.jnt_qposadr[block_joint]
-
-        gripper_lr_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "gripper_leftright")
-        gripper_fb_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "gripper_forwardbackward")
-        gripper_ud_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "gripper_updown")
-
-        lr_adr = self.model.jnt_qposadr[gripper_lr_joint]
-        fb_adr = self.model.jnt_qposadr[gripper_fb_joint]
-        ud_adr = self.model.jnt_qposadr[gripper_ud_joint]
 
         left_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "left_slide")
         right_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "right_slide")
         left_adr = self.model.jnt_qposadr[left_finger_joint]
         right_adr = self.model.jnt_qposadr[right_finger_joint]
 
-        # Position gripper above target with small noise
-        gripper_height = TARGET_HEIGHT_ABOVE_TARGET + np.random.uniform(-INITIAL_HEIGHT_NOISE, INITIAL_HEIGHT_NOISE)
-
-        # Small position noise - much smaller than before to help initial learning
-        pos_noise_x = np.random.uniform(-INITIAL_POSITION_NOISE_RANGE, INITIAL_POSITION_NOISE_RANGE)
-        pos_noise_y = np.random.uniform(-INITIAL_POSITION_NOISE_RANGE, INITIAL_POSITION_NOISE_RANGE)
-
-        # Set gripper position aligned above target with noise
-        self.data.qpos[lr_adr] = target_pos[0] + pos_noise_x
-        self.data.qpos[fb_adr] = target_pos[1] + pos_noise_y
-        self.data.qpos[ud_adr] = -(0.3 - gripper_height)
-
+        # Forward pass to get gripper position from default qpos
+        mujoco.mj_forward(self.model, self.data)
+        
+        # Get default gripper position
+        gripper_pos = self.data.xpos[self.gripper][:3].copy()
+        
+        # Place target below gripper with random horizontal offset
+        target_offset_x = np.random.uniform(-TARGET_OFFSET_RANGE, TARGET_OFFSET_RANGE)
+        target_offset_y = np.random.uniform(-TARGET_OFFSET_RANGE, TARGET_OFFSET_RANGE)
+        
+        target_id = self.model.geom("target").id
+        self.model.geom_pos[target_id] = np.array([
+            gripper_pos[0] + target_offset_x,
+            gripper_pos[1] + target_offset_y,
+            0.001  # Target on ground
+        ])
+        
         # Set fingers to closed position
         self.data.qpos[left_adr] = FINGER_CLOSE_POSITION
         self.data.qpos[right_adr] = FINGER_CLOSE_POSITION
 
-        # Position block at gripper location
+        # Position block at gripper location (will be held by closed fingers)
         self.data.qpos[block_adr:block_adr+3] = [
-            target_pos[0] + pos_noise_x,
-            target_pos[1] + pos_noise_y,
-            gripper_height
+            gripper_pos[0],
+            gripper_pos[1],
+            gripper_pos[2]  # Same height as gripper
         ]
-        self.data.qpos[block_adr+3:block_adr+7] = [1, 0, 0, 0]
+        self.data.qpos[block_adr+3:block_adr+7] = [1, 0, 0, 0]  # Identity quaternion
 
         # Set finger actuator to maintain closed position
         self.data.ctrl[self.finger] = FINGER_CLOSE_COMMAND
+        self.data.ctrl[self.updown] = 0.0
+        self.data.ctrl[self.leftright] = 0.0
+        self.data.ctrl[self.forwardback] = 0.0
 
-        # Zero out all velocities BEFORE settling
-        self.data.qvel[:] = 0.0
-
-        # Propagate physics
+        # Propagate physics to get proper contact
         mujoco.mj_forward(self.model, self.data)
 
-        # Let physics settle
+        # Let physics settle for grasp
         for _ in range(20):
             self.data.ctrl[self.finger] = FINGER_CLOSE_COMMAND
             self.data.ctrl[self.updown] = 0.0
             self.data.ctrl[self.leftright] = 0.0
             self.data.ctrl[self.forwardback] = 0.0
             mujoco.mj_step(self.model, self.data)
-
-        # IMPORTANT: Reset velocities to zero AFTER settling to ensure clean start
-        self.data.qvel[:] = 0.0
-        mujoco.mj_forward(self.model, self.data)
 
         # Check if grasp was successful
         self.initial_grasp_success = self._check_grasped()
@@ -422,9 +428,13 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         finger_distance = np.linalg.norm(left_finger_xy - right_finger_xy)
         self.prev_finger_distance = finger_distance
 
-        rel_to_target = target_pos - block_pos
-        horizontal_dist = np.linalg.norm((block_pos - target_pos)[:2])
+        # Calculate relative displacements
+        rel_gripper_to_target = target_pos - gripper_pos
+        horizontal_dist = np.linalg.norm((gripper_pos - target_pos)[:2])
         self.prev_horizontal_dist = horizontal_dist
+        
+        gripper_height_above_target = float(gripper_pos[2] - target_pos[2])
+        block_height_above_ground = float(block_pos[2])
 
         # Get velocities
         try:
@@ -441,11 +451,12 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         except Exception:
             block_vel_z = 0.0
 
+        # Observation with RELATIVE displacements
         obs = np.concatenate([
-            rel_to_target / 0.5,
-            np.array([gripper_pos[2]]),
-            np.array([horizontal_dist]),
-            np.array([block_pos[2]]),
+            rel_gripper_to_target[:2] / 0.5,  # Normalized relative XY
+            np.array([gripper_height_above_target]),  # Height above target
+            np.array([horizontal_dist]),  # Horizontal distance
+            np.array([block_height_above_ground]),  # Block absolute height
             np.array([finger_distance]),
             gripper_vel,
             np.array([block_vel_z]),
@@ -465,8 +476,11 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         finger_distance = np.linalg.norm(left_finger_xy - right_finger_xy)
         grasped = self._check_grasped()
 
-        rel_to_target = target_pos - block_pos
-        horizontal_dist = np.linalg.norm((block_pos - target_pos)[:2])
+        # RELATIVE displacements
+        rel_gripper_to_target = target_pos - gripper_pos
+        horizontal_dist = np.linalg.norm((gripper_pos - target_pos)[:2])
+        gripper_height_above_target = float(gripper_pos[2] - target_pos[2])
+        block_height_above_ground = float(block_pos[2])
 
         try:
             gripper_vel_all = np.zeros(6)
@@ -483,10 +497,10 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
             block_vel_z = 0.0
 
         return np.concatenate([
-            rel_to_target / 0.5,
-            np.array([gripper_pos[2]]),
-            np.array([horizontal_dist]),
-            np.array([block_pos[2]]),
+            rel_gripper_to_target[:2] / 0.5,  # Normalized relative XY
+            np.array([gripper_height_above_target]),  # Height above target
+            np.array([horizontal_dist]),  # Horizontal distance
+            np.array([block_height_above_ground]),  # Block absolute height
             np.array([finger_distance]),
             gripper_vel,
             np.array([block_vel_z]),

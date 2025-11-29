@@ -1,15 +1,15 @@
 from gripper_env_release import GripperReleaseEnv
 import numpy as np
 
-print("Testing GripperReleaseEnv (Stage 4 - Two-Phase Release)...")
+print("Testing GripperReleaseEnv (Stage 4 - Fixed Gripper, Target Below)...")
 
 env = GripperReleaseEnv()
 
 # Test reset
 obs, info = env.reset(seed=42)
 print(f"Observation shape: {obs.shape}")
-print(f"Expected shape: (11,)")
-assert obs.shape == (11,), f"Obs must be an 11-vector, got {obs.shape}"
+print(f"Expected shape: (10,)")
+assert obs.shape == (10,), f"Obs must be a 10-vector, got {obs.shape}"
 print(f"Initial observation: {obs}")
 
 # Test action space
@@ -18,7 +18,7 @@ assert env.action_space.shape == (4,), "Action space should be 4D (up/down, left
 
 # Test observation space
 print(f"Observation space: {env.observation_space}")
-assert env.observation_space.shape == (11,), "Observation space should be 11D"
+assert env.observation_space.shape == (10,), "Observation space should be 10D"
 
 # Test a few random steps
 print("\nRunning 20 random steps...")
