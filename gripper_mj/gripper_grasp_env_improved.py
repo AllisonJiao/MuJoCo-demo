@@ -7,12 +7,13 @@ from mujoco_py_env import MuJocoPyEnv
 
 import numpy as np
 import mujoco
-from gripper_controller import rand_spawn
 
 BLOCK_DIMENSION = 0.05
 SUCCESS_THRESHOLD = 0.2 * BLOCK_DIMENSION
 MAX_STEPS = 500
-GRASP_HEIGHT_ABOVE = 0.1  # Start gripper this height above block
+# Height above block - from stage 1 success condition (MIN_ABOVE = 0.2)
+MIN_ABOVE = 0.2  # ~20 cm above block (from stage 1)
+GRASP_HEIGHT_ABOVE = MIN_ABOVE  # Start gripper at this height above block
 
 STUCK_THRESHOLD = 0.001  # Distance change threshold to consider as "stuck"
 STUCK_PENALTY = 0.05  # Penalty for being stuck
@@ -22,8 +23,20 @@ FINGER_BASE_SEPARATION = 0.12  # 0.06m * 2 (distance between finger centers at r
 FINGER_WIDTH = 0.04  # Finger half-extent in x direction (0.02m * 2)
 FINGER_HEIGHT = 0.16  # Finger half-extent in z direction (0.08m * 2)
 
+# Initialization parameters - block offset range (gripper stays fixed)
+BLOCK_OFFSET_RANGE = SUCCESS_THRESHOLD * 2.0  # Horizontal offset range for block from gripper center
+
+# Default gripper height (from XML model - gripper starts at z=0.3)
+DEFAULT_GRIPPER_HEIGHT = 0.3  # Gripper default height above ground
+
 """
 Improved GripperGraspEnv with velocity-based observations and better reward shaping.
+
+NEW APPROACH: Fixed gripper position, randomized block below
+- Gripper stays at default position (no joint position changes that cause velocity drift)
+- Block is placed below gripper with horizontal offset noise
+- Target is randomly placed on the ground plane
+- Observation uses RELATIVE displacements (gripper-to-block)
 
 Based on GripperGPT.xml model structure:
 - Left finger: at x=-0.06m from gripper center, slides along x-axis
@@ -40,6 +53,7 @@ Key improvements:
 5. Velocity-based rewards (low velocity when close to grasping)
 6. Better reward shaping with separate components
 7. Geometric inner-side contact detection based on finger positions
+8. Fixed gripper position to avoid initial velocity from intvelocity actuators
 """
 
 class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
@@ -125,8 +139,8 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         self.finger_open = -0.05  # More open (negative = more open based on joint range)
         self.finger_close = 3.0
         
-        # Initial height above block (will be set in reset)
-        self.initial_height = GRASP_HEIGHT_ABOVE
+        # Note: Gripper now stays at default position (no initial_height used)
+        # Block is placed below gripper with slight horizontal offset
         
         # Reward shaping parameters
         self.prev_vertical_dist = None
@@ -321,16 +335,17 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             gripper_vel = np.array([0.0, 0.0, 0.0], dtype=float)
         
         # Build observation with normalized values and velocities
+        # Use RELATIVE displacement between gripper and block instead of absolute positions
         if self.allow_xy_adjust:
             obs = np.concatenate([
-                rel / 0.5,  # Normalized relative position [x, y, z]
+                rel / 0.5,  # Normalized relative position [x, y, z] (block - gripper)
                 np.array([vertical_dist]),  # Vertical distance
                 np.array([horizontal_dist]),  # Horizontal distance
                 np.array([finger_state]),  # Finger state
                 np.array([float(grasped)]),  # Grasped indicator
                 np.array([float(ground_contact_obs)]),  # Ground contact indicator
-                np.array([gripper_xyz[2]]),  # Absolute gripper height
-                np.array([block_xyz[2]]),  # Block height
+                np.array([vertical_dist]),  # Relative height (replaces absolute gripper height)
+                np.array([block_xyz[2]]),  # Block height (for ground detection)
                 gripper_vel  # Gripper velocity [vx, vy, vz]
             ], dtype=np.float32)
         else:
@@ -340,8 +355,8 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
                 np.array([finger_state]),  # Finger state
                 np.array([float(grasped)]),  # Grasped indicator
                 np.array([float(ground_contact_obs)]),  # Ground contact indicator
-                np.array([gripper_xyz[2]]),  # Absolute gripper height
-                np.array([block_xyz[2]]),  # Block height
+                np.array([vertical_dist]),  # Relative height (replaces absolute gripper height)
+                np.array([block_xyz[2]]),  # Block height (for ground detection)
                 np.array([gripper_vel[2]])  # Gripper vertical velocity
             ], dtype=np.float32)
 
@@ -495,7 +510,14 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         return obs, reward, terminated, truncated, info
 
     def reset_model(self):
-        """Reset: position gripper above block (like successful Env A outcome)."""
+        """Reset the environment with FIXED gripper position, block below with horizontal offset.
+        
+        NEW APPROACH (following gripper_env_release.py):
+        - Gripper stays at default position (no joint changes that cause velocity drift)
+        - Block is placed below gripper with random horizontal offset
+        - Target is randomly placed on the ground plane
+        - All observations use relative displacements
+        """
         self.step_count = 0
         
         # Reset previous values
@@ -503,45 +525,64 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         self.prev_horizontal_dist = None
         self.prev_gripper_height = None
         self.prev_block_height = None
+
+        # Reset simulation to initial state (this gives us default gripper position)
+        mujoco.mj_resetData(self.model, self.data)
         
-        # Randomize block position (but keep it on ground)
-        rand_spawn(self.model, self.data)
+        # Get joint addresses
+        block_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "block_free")
+        block_adr = self.model.jnt_qposadr[block_joint]
+
+        left_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "left_slide")
+        left_adr = self.model.jnt_qposadr[left_finger_joint]
+        
+        # Forward pass to get gripper position from default qpos
         mujoco.mj_forward(self.model, self.data)
         
-        # Get block position
+        # Get default gripper position
+        gripper_pos = self.data.xpos[self.gripper][:3].copy()
+        
+        # Randomize target position normally (on ground plane)
+        target_id = self.model.geom("target").id
+        self.model.geom_pos[target_id] = np.array([
+            np.random.uniform(-0.5, 0.5),   # x
+            np.random.uniform(-0.5, 0.5),   # y
+            0.001                           # z (on ground)
+        ])
+        
+        # Place block below gripper with random horizontal offset
+        block_offset_x = np.random.uniform(-BLOCK_OFFSET_RANGE, BLOCK_OFFSET_RANGE)
+        block_offset_y = np.random.uniform(-BLOCK_OFFSET_RANGE, BLOCK_OFFSET_RANGE)
+        
+        # Position block at ground level below gripper (with offset)
+        self.data.qpos[block_adr:block_adr+3] = [
+            gripper_pos[0] + block_offset_x,
+            gripper_pos[1] + block_offset_y,
+            BLOCK_DIMENSION  # z = block half-size (resting on ground)
+        ]
+        self.data.qpos[block_adr+3:block_adr+7] = [1, 0, 0, 0]  # Identity quaternion
+
+        # Set fingers to open position
+        self.data.qpos[left_adr] = self.finger_open
+
+        # Set controls to neutral to avoid initial velocity
+        self.data.ctrl[self.updown] = 0.0
+        self.data.ctrl[self.leftright] = 0.0
+        self.data.ctrl[self.forwardback] = 0.0
+        self.data.ctrl[self.finger] = self.finger_open
+        
+        # Propagate physics
+        mujoco.mj_forward(self.model, self.data)
+
+        # Get updated positions
         block_xyz = self.data.xpos[self.body][:3]
-        block_xy = block_xyz[:2]
-        
-        # Position gripper directly above block at initial height
-        gripper_joint_lr = self.model.joint("gripper_leftright").id
-        gripper_joint_fb = self.model.joint("gripper_forwardbackward").id
-        gripper_joint_ud = self.model.joint("gripper_updown").id
-        
-        lr_adr = self.model.jnt_qposadr[gripper_joint_lr]
-        fb_adr = self.model.jnt_qposadr[gripper_joint_fb]
-        ud_adr = self.model.jnt_qposadr[gripper_joint_ud]
-        
-        # Set gripper XY to match block XY (aligned above)
-        self.data.qpos[lr_adr] = block_xy[0]  # x position
-        self.data.qpos[fb_adr] = block_xy[1]  # y position
-        
-        # Set gripper height to be above block
-        self.data.qpos[ud_adr] = -self.initial_height  # Negative because joint range is negative
-        
-        # Open fingers
-        finger_joint = self.model.joint("left_slide").id
-        finger_adr = self.model.jnt_qposadr[finger_joint]
-        self.data.qpos[finger_adr] = self.finger_open
-        
-        # Forward kinematics
-        mujoco.mj_forward(self.model, self.data)
-        
-        # Build observation (after forward kinematics)
         gripper_xyz = self.data.xpos[self.gripper][:3]
+        block_xy = block_xyz[:2]
         gripper_xy = gripper_xyz[:2]
+        
         vertical_dist = gripper_xyz[2] - block_xyz[2]
         horizontal_dist = np.linalg.norm(block_xy - gripper_xy)
-        finger_state = self.data.qpos[finger_adr]
+        finger_state = self.data.qpos[left_adr]
         grasped = False
         
         # Check ground contact for observation (at reset, should be False)
@@ -555,7 +596,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         except Exception:
             gripper_vel = np.array([0.0, 0.0, 0.0], dtype=float)
         
-        # Relative position vector
+        # Relative position vector (block - gripper)
         rel = block_xyz - gripper_xyz
         
         # Initialize previous values
@@ -564,16 +605,17 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         self.prev_vertical_dist = vertical_dist
         self.prev_horizontal_dist = horizontal_dist
         
+        # Use RELATIVE displacement between gripper and block instead of absolute positions
         if self.allow_xy_adjust:
             obs = np.concatenate([
-                rel / 0.5,  # Normalized relative position
+                rel / 0.5,  # Normalized relative position (block - gripper)
                 np.array([vertical_dist]),
                 np.array([horizontal_dist]),
                 np.array([finger_state]),
                 np.array([float(grasped)]),
                 np.array([float(ground_contact_obs)]),
-                np.array([gripper_xyz[2]]),
-                np.array([block_xyz[2]]),
+                np.array([vertical_dist]),  # Relative height (replaces absolute gripper height)
+                np.array([block_xyz[2]]),  # Block height (for ground detection)
                 gripper_vel
             ], dtype=np.float32)
         else:
@@ -583,8 +625,8 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
                 np.array([finger_state]),
                 np.array([float(grasped)]),
                 np.array([float(ground_contact_obs)]),
-                np.array([gripper_xyz[2]]),
-                np.array([block_xyz[2]]),
+                np.array([vertical_dist]),  # Relative height (replaces absolute gripper height)
+                np.array([block_xyz[2]]),  # Block height (for ground detection)
                 np.array([gripper_vel[2]])  # Vertical velocity only
             ], dtype=np.float32)
         
@@ -630,16 +672,17 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         # Relative position vector
         rel = block_xyz - gripper_xyz
         
+        # Use RELATIVE displacement between gripper and block instead of absolute positions
         if self.allow_xy_adjust:
             return np.concatenate([
-                rel / 0.5,  # Normalized relative position
+                rel / 0.5,  # Normalized relative position (block - gripper)
                 np.array([vertical_dist]),
                 np.array([horizontal_dist]),
                 np.array([finger_state]),
                 np.array([float(grasped)]),
                 np.array([float(ground_contact_obs)]),
-                np.array([gripper_xyz[2]]),
-                np.array([block_xyz[2]]),
+                np.array([vertical_dist]),  # Relative height (replaces absolute gripper height)
+                np.array([block_xyz[2]]),  # Block height (for ground detection)
                 gripper_vel
             ], dtype=np.float32)
         else:
@@ -649,8 +692,8 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
                 np.array([finger_state]),
                 np.array([float(grasped)]),
                 np.array([float(ground_contact_obs)]),
-                np.array([gripper_xyz[2]]),
-                np.array([block_xyz[2]]),
+                np.array([vertical_dist]),  # Relative height (replaces absolute gripper height)
+                np.array([block_xyz[2]]),  # Block height (for ground detection)
                 np.array([gripper_vel[2]])  # Vertical velocity only
             ], dtype=np.float32)
 
