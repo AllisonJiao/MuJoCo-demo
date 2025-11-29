@@ -75,10 +75,15 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         utils.EzPickle.__init__(self, allow_xy_adjust=allow_xy_adjust, **kwargs)
         
         # Observation: normalized relative position, distances, finger state, contact info, velocities
+        # Note: Position 8 (allow_xy=True) / Position 5 (allow_xy=False) uses vertical_dist instead of
+        # absolute gripper_z to use relative displacement. This creates redundancy with position 3/1 
+        # but maintains the same observation shape for compatibility.
+        #
         # With XY adjust: [rel_x, rel_y, rel_z, vertical_dist, horizontal_dist, finger_state, 
-        #                  grasped, ground_contact, gripper_z, block_z, gripper_vel_x, gripper_vel_y, gripper_vel_z]
+        #                  grasped, ground_contact, vertical_dist (replaces gripper_z), block_z, 
+        #                  gripper_vel_x, gripper_vel_y, gripper_vel_z]
         # Without XY adjust: [rel_z, vertical_dist, finger_state, grasped, ground_contact, 
-        #                     gripper_z, block_z, gripper_vel_z]
+        #                     vertical_dist (replaces gripper_z), block_z, gripper_vel_z]
         if allow_xy_adjust:
             obs_dim = 13
         else:
@@ -335,16 +340,18 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             gripper_vel = np.array([0.0, 0.0, 0.0], dtype=float)
         
         # Build observation with normalized values and velocities
-        # Use RELATIVE displacement between gripper and block instead of absolute positions
+        # Use RELATIVE displacement between gripper and block
+        # Position 8 uses vertical_dist (relative height) instead of absolute gripper_z
+        # This avoids the issue where gripper position varies but relative geometry is what matters
         if self.allow_xy_adjust:
             obs = np.concatenate([
                 rel / 0.5,  # Normalized relative position [x, y, z] (block - gripper)
-                np.array([vertical_dist]),  # Vertical distance
+                np.array([vertical_dist]),  # Vertical distance (gripper above block)
                 np.array([horizontal_dist]),  # Horizontal distance
                 np.array([finger_state]),  # Finger state
                 np.array([float(grasped)]),  # Grasped indicator
                 np.array([float(ground_contact_obs)]),  # Ground contact indicator
-                np.array([vertical_dist]),  # Relative height (replaces absolute gripper height)
+                np.array([vertical_dist]),  # Relative height (replaces absolute gripper_z)
                 np.array([block_xyz[2]]),  # Block height (for ground detection)
                 gripper_vel  # Gripper velocity [vx, vy, vz]
             ], dtype=np.float32)
@@ -355,7 +362,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
                 np.array([finger_state]),  # Finger state
                 np.array([float(grasped)]),  # Grasped indicator
                 np.array([float(ground_contact_obs)]),  # Ground contact indicator
-                np.array([vertical_dist]),  # Relative height (replaces absolute gripper height)
+                np.array([vertical_dist]),  # Relative height (replaces absolute gripper_z)
                 np.array([block_xyz[2]]),  # Block height (for ground detection)
                 np.array([gripper_vel[2]])  # Gripper vertical velocity
             ], dtype=np.float32)
@@ -605,27 +612,28 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         self.prev_vertical_dist = vertical_dist
         self.prev_horizontal_dist = horizontal_dist
         
-        # Use RELATIVE displacement between gripper and block instead of absolute positions
+        # Use RELATIVE displacement between gripper and block
+        # Position 8/5 uses vertical_dist (relative height) instead of absolute gripper_z
         if self.allow_xy_adjust:
             obs = np.concatenate([
                 rel / 0.5,  # Normalized relative position (block - gripper)
-                np.array([vertical_dist]),
+                np.array([vertical_dist]),  # Vertical distance (gripper above block)
                 np.array([horizontal_dist]),
                 np.array([finger_state]),
                 np.array([float(grasped)]),
                 np.array([float(ground_contact_obs)]),
-                np.array([vertical_dist]),  # Relative height (replaces absolute gripper height)
+                np.array([vertical_dist]),  # Relative height (replaces absolute gripper_z)
                 np.array([block_xyz[2]]),  # Block height (for ground detection)
                 gripper_vel
             ], dtype=np.float32)
         else:
             obs = np.concatenate([
                 np.array([rel[2] / 0.5]),  # Normalized relative z
-                np.array([vertical_dist]),
+                np.array([vertical_dist]),  # Vertical distance (gripper above block)
                 np.array([finger_state]),
                 np.array([float(grasped)]),
                 np.array([float(ground_contact_obs)]),
-                np.array([vertical_dist]),  # Relative height (replaces absolute gripper height)
+                np.array([vertical_dist]),  # Relative height (replaces absolute gripper_z)
                 np.array([block_xyz[2]]),  # Block height (for ground detection)
                 np.array([gripper_vel[2]])  # Vertical velocity only
             ], dtype=np.float32)
@@ -672,27 +680,28 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         # Relative position vector
         rel = block_xyz - gripper_xyz
         
-        # Use RELATIVE displacement between gripper and block instead of absolute positions
+        # Use RELATIVE displacement between gripper and block
+        # Position 8/5 uses vertical_dist (relative height) instead of absolute gripper_z
         if self.allow_xy_adjust:
             return np.concatenate([
                 rel / 0.5,  # Normalized relative position (block - gripper)
-                np.array([vertical_dist]),
+                np.array([vertical_dist]),  # Vertical distance (gripper above block)
                 np.array([horizontal_dist]),
                 np.array([finger_state]),
                 np.array([float(grasped)]),
                 np.array([float(ground_contact_obs)]),
-                np.array([vertical_dist]),  # Relative height (replaces absolute gripper height)
+                np.array([vertical_dist]),  # Relative height (replaces absolute gripper_z)
                 np.array([block_xyz[2]]),  # Block height (for ground detection)
                 gripper_vel
             ], dtype=np.float32)
         else:
             return np.concatenate([
                 np.array([rel[2] / 0.5]),  # Normalized relative z
-                np.array([vertical_dist]),
+                np.array([vertical_dist]),  # Vertical distance (gripper above block)
                 np.array([finger_state]),
                 np.array([float(grasped)]),
                 np.array([float(ground_contact_obs)]),
-                np.array([vertical_dist]),  # Relative height (replaces absolute gripper height)
+                np.array([vertical_dist]),  # Relative height (replaces absolute gripper_z)
                 np.array([block_xyz[2]]),  # Block height (for ground detection)
                 np.array([gripper_vel[2]])  # Vertical velocity only
             ], dtype=np.float32)
