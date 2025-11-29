@@ -129,10 +129,10 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         # Action space: [up/down, finger] or [up/down, xy_adjust_x, xy_adjust_y, finger]
         if allow_xy_adjust:
             self.action_space = spaces.Box(low=-1, high=1, shape=(4,), dtype=np.float32)
-            self.ctrl_scale = np.array([15.0, 2.0, 2.0, 3.0], dtype=float)  # Small XY adjustments
+            self.ctrl_scale = np.array([1, 1, 1, 1], dtype=float)  # Small XY adjustments
         else:
             self.action_space = spaces.Box(low=-1, high=1, shape=(2,), dtype=np.float32)
-            self.ctrl_scale = np.array([15.0, 3.0], dtype=float)  # [up/down, finger]
+            self.ctrl_scale = np.array([1, 1], dtype=float)  # [up/down, finger]
         
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, 
@@ -277,7 +277,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             self.data.ctrl[self.leftright] = action_scaled[1]
             self.data.ctrl[self.forwardback] = action_scaled[2]
             # Finger control
-            finger_control = (action[3] + 1.0) / 2.0  # Map to [0, 1]
+            finger_control = action_scaled[3]
             finger_control = self.finger_open + finger_control * (self.finger_close - self.finger_open)
             self.data.ctrl[self.finger] = finger_control
         else:
@@ -286,7 +286,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             self.data.ctrl[self.leftright] = 0.0  # Keep centered
             self.data.ctrl[self.forwardback] = 0.0  # Keep centered
             # Finger control
-            finger_control = (action[1] + 1.0) / 2.0  # Map to [0, 1]
+            finger_control = action_scaled[1]
             finger_control = self.finger_open + finger_control * (self.finger_close - self.finger_open)
             self.data.ctrl[self.finger] = finger_control
 
