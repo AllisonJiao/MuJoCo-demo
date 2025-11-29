@@ -371,6 +371,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         # 4. Uniform scale (all rewards/penalties in similar range)
         # 5. Penalize fingers touching ground (going too low)
         # 6. Penalize moving away from block
+        # 7. Penalize excessive velocity (swinging)
         # ============================================================
         
         reward = 0.0
@@ -463,7 +464,34 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         reward += horizontal_penalty
         
         # ============================================================
-        # REWARD COMPONENT 3: Finger behavior (scale: -2 to +0.5)
+        # REWARD COMPONENT 3: Velocity penalty (scale: -1 to 0)
+        # Penalize excessive horizontal velocity (swinging behavior)
+        # Also penalize excessive vertical velocity when near target
+        # ============================================================
+        horizontal_vel = np.linalg.norm(gripper_vel[:2])
+        vertical_vel = gripper_vel[2]
+        
+        # Horizontal velocity penalty - always penalize swinging
+        horizontal_vel_penalty = -horizontal_vel * 2.0
+        horizontal_vel_penalty = np.clip(horizontal_vel_penalty, -1.0, 0.0)
+        reward += horizontal_vel_penalty
+        
+        # Vertical velocity penalty - penalize moving UP (wasting time)
+        # and excessive downward velocity near target height
+        if vertical_vel > 0.01:  # Moving up
+            vertical_vel_penalty = -vertical_vel * 3.0  # Penalize moving up
+            vertical_vel_penalty = np.clip(vertical_vel_penalty, -1.0, 0.0)
+            reward += vertical_vel_penalty
+        elif gripper_height < TARGET_GRIPPER_HEIGHT + 0.05:  # Near target
+            # Penalize excessive downward velocity when approaching target
+            downward_vel = -vertical_vel if vertical_vel < 0 else 0
+            if downward_vel > 0.05:  # Threshold for "fast" descent
+                vertical_vel_penalty = -(downward_vel - 0.05) * 5.0
+                vertical_vel_penalty = np.clip(vertical_vel_penalty, -1.0, 0.0)
+                reward += vertical_vel_penalty
+        
+        # ============================================================
+        # REWARD COMPONENT 4: Finger behavior (scale: -2 to +0.5)
         # ONLY reward open fingers while ABOVE grasping height
         # Reward closing at grasping height
         # REDUCED finger-open reward to prevent exploitation
@@ -482,7 +510,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         reward += finger_reward
         
         # ============================================================
-        # REWARD COMPONENT 4: Height-based reward (scale: 0 to 0.5)
+        # REWARD COMPONENT 5: Height-based reward (scale: 0 to 0.5)
         # Reward being at good grasping height (not too high, not too low)
         # ============================================================
         if gripper_height > TARGET_GRIPPER_HEIGHT:
@@ -498,13 +526,13 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         reward += height_reward
         
         # ============================================================
-        # REWARD COMPONENT 5: Finger ground contact penalty (scale: -3)
+        # REWARD COMPONENT 6: Finger ground contact penalty (scale: -3)
         # ============================================================
         if finger_ground_contact:
             reward -= 3.0
         
         # ============================================================
-        # REWARD COMPONENT 6: Contact rewards (scale: 0 to 1)
+        # REWARD COMPONENT 7: Contact rewards (scale: 0 to 1)
         # Only reward contact if gripper descended properly AND is centered
         # ============================================================
         contact_reward = 0.0
@@ -518,7 +546,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         reward += contact_reward
         
         # ============================================================
-        # REWARD COMPONENT 7: Success reward (scale: +5)
+        # REWARD COMPONENT 8: Success reward (scale: +5)
         # Large reward for successful grasp
         # ============================================================
         if grasped and self.proper_descent:
@@ -549,6 +577,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             "gripper_height": gripper_height,
             "progress_reward": progress,
             "horizontal_penalty": horizontal_penalty,
+            "horizontal_vel_penalty": horizontal_vel_penalty,
             "finger_reward": finger_reward,
             "height_reward": height_reward,
             "contact_reward": contact_reward,
