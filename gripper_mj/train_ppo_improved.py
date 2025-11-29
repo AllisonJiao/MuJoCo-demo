@@ -8,11 +8,13 @@ import argparse
 import numpy as np
 from pathlib import Path
 import cv2
-from gripper_env_improved import GripperEnv  # Improved environment
+from gripper_env_improved import GripperEnv  # Improved positioning environment
+from gripper_grasp_env_improved import GripperGraspEnv, MAX_STEPS as GRASP_MAX_STEPS  # Improved grasping environment
 
 TRAIN_EPS = 100000
 VALID_EPS = 10
-VALID_MAX_STEPS = 500
+VALID_MAX_STEPS_POSITION = 500
+VALID_MAX_STEPS_GRASP = 200  # Shorter episodes for grasping task
 
 # Checkpoint configuration
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints")
@@ -29,28 +31,49 @@ parser.add_argument("--debug-log", action="store_true", help="Print per-step dia
 parser.add_argument("--action-scale", type=float, default=1.0, help="Multiply actions by this scale during evaluation")
 parser.add_argument("--train-timesteps", type=int, default=TRAIN_EPS, help="Total timesteps for training")
 parser.add_argument("--ent-coef", type=float, default=0.01, help="Entropy coefficient (higher = more exploration)")
-parser.add_argument("--enable-updown", action="store_true", help="Enable learnable up/down control")
+parser.add_argument("--enable-updown", action="store_true", help="Enable learnable up/down control (for positioning env)")
+parser.add_argument("--allow-xy-adjust", action="store_true", help="Allow small XY adjustments (for grasping env)")
 parser.add_argument("--learning-rate", type=float, default=3e-4, help="Learning rate")
+parser.add_argument("--env-type", type=str, default="position", choices=["position", "grasp"], 
+                    help="Environment type: 'position' for positioning or 'grasp' for grasping")
 parser.add_argument("--eval-episodes", type=int, default=VALID_EPS, help="Number of evaluation episodes")
 args = parser.parse_args()
 
 # Render mode configuration
 RENDER_MODE = "human" if args.render_video and args.eval_only else None
 
+# Adjust checkpoint directory and max steps based on environment type
+if args.env_type == "grasp":
+    CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints_grasp")
+    VALID_MAX_STEPS = VALID_MAX_STEPS_GRASP
+else:
+    VALID_MAX_STEPS = VALID_MAX_STEPS_POSITION
+
 # Create checkpoint directory
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 def make():
-    if RENDER_MODE:
-        return GripperEnv(render_mode=RENDER_MODE, enable_updown_control=args.enable_updown)
-    return GripperEnv(enable_updown_control=args.enable_updown)
+    """Create environment - can be positioning (Env A) or grasping (Env B)"""
+    if args.env_type == "grasp":
+        # Env B: Grasp-only environment
+        if RENDER_MODE:
+            return GripperGraspEnv(render_mode=RENDER_MODE, allow_xy_adjust=args.allow_xy_adjust)
+        return GripperGraspEnv(allow_xy_adjust=args.allow_xy_adjust)
+    else:
+        # Env A: Positioning environment (default)
+        if RENDER_MODE:
+            return GripperEnv(render_mode=RENDER_MODE, enable_updown_control=args.enable_updown)
+        return GripperEnv(enable_updown_control=args.enable_updown)
 
 # Skip env creation and training if eval-only mode
 if not args.eval_only:
     n_envs = 1 if RENDER_MODE == "human" else N_ENVS
     venv = make_vec_env(make, n_envs=n_envs, seed=0)
 
-    print(f"PPO training with up/down control: {args.enable_updown}")
+    if args.env_type == "grasp":
+        print(f"PPO training for grasping with XY adjust: {args.allow_xy_adjust}")
+    else:
+        print(f"PPO training for positioning with up/down control: {args.enable_updown}")
     print(f"ent_coef={args.ent_coef}, learning_rate={args.learning_rate}, train_timesteps={args.train_timesteps}")
     
     # Improved PPO hyperparameters for deterministic precision
@@ -92,9 +115,10 @@ class PyTorchCheckpointCallback(BaseCallback):
         
     def _on_step(self) -> bool:
         if self.num_timesteps - self.last_save >= self.save_freq:
+            model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else "ppo_model"
             checkpoint_path = os.path.join(
                 self.save_path, 
-                f"ppo_model_{self.num_timesteps}.pt"
+                f"{model_prefix}_{self.num_timesteps}.pt"
             )
             torch.save({
                 'policy_state_dict': self.model.policy.state_dict(),
@@ -107,10 +131,11 @@ class PyTorchCheckpointCallback(BaseCallback):
         return True
 
 if not args.eval_only:
+    model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else "ppo_model"
     checkpoint_callback = CheckpointCallback(
         save_freq=max(CHECKPOINT_INTERVAL // N_ENVS, 1),
         save_path=CHECKPOINT_DIR,
-        name_prefix="ppo_model",
+        name_prefix=model_prefix,
         save_replay_buffer=False,
     )
 
@@ -127,11 +152,12 @@ if not args.eval_only:
     )
 
     # Save final model
-    final_model_path = os.path.join(CHECKPOINT_DIR, "ppo_model_final.zip")
+    model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else "ppo_model"
+    final_model_path = os.path.join(CHECKPOINT_DIR, f"{model_prefix}_final.zip")
     model.save(final_model_path)
     print(f"Saved final model to {final_model_path}")
 
-    final_pt_path = os.path.join(CHECKPOINT_DIR, "ppo_model_final.pt")
+    final_pt_path = os.path.join(CHECKPOINT_DIR, f"{model_prefix}_final.pt")
     torch.save({
         'policy_state_dict': model.policy.state_dict(),
         'optimizer_state_dict': model.policy.optimizer.state_dict(),
@@ -143,8 +169,20 @@ else:
 
 # Validation
 validation_render_mode = "rgb_array" if args.render_video else RENDER_MODE
-video_width, video_height = (1280, 720) if args.render_video else (480, 480)
-env = GripperEnv(render_mode=validation_render_mode, width=video_width, height=video_height, enable_updown_control=args.enable_updown)
+if args.render_video:
+    video_width, video_height = (1280, 720)
+else:
+    video_width, video_height = (480, 480)
+
+# Create appropriate environment for validation
+if args.env_type == "grasp":
+    if args.render_video:
+        env = GripperGraspEnv(render_mode=validation_render_mode, width=video_width, height=video_height, allow_xy_adjust=args.allow_xy_adjust)
+    else:
+        env = GripperGraspEnv(render_mode=validation_render_mode, allow_xy_adjust=args.allow_xy_adjust)
+else:
+    env = GripperEnv(render_mode=validation_render_mode, width=video_width, height=video_height, enable_updown_control=args.enable_updown)
+
 obs, info = env.reset(seed=123)
 total_r, successes = 0.0, 0
 
@@ -154,7 +192,8 @@ if args.eval_only:
         print(f"Loading model from {args.model_path}")
         model = PPO.load(args.model_path, env=env)
     else:
-        final_model_path = os.path.join(CHECKPOINT_DIR, "ppo_model_final.zip")
+        model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else "ppo_model"
+        final_model_path = os.path.join(CHECKPOINT_DIR, f"{model_prefix}_final.zip")
         if os.path.exists(final_model_path):
             print(f"Loading model from {final_model_path}")
             model = PPO.load(final_model_path, env=env)
@@ -165,7 +204,8 @@ if args.eval_only:
 # Create video directory if rendering videos
 VIDEO_DIR = None
 if args.render_video:
-    VIDEO_DIR = os.path.join(os.path.dirname(__file__), "videos")
+    video_dir_name = "videos_grasp" if args.env_type == "grasp" else "videos"
+    VIDEO_DIR = os.path.join(os.path.dirname(__file__), video_dir_name)
     os.makedirs(VIDEO_DIR, exist_ok=True)
     print(f"Videos will be saved to {VIDEO_DIR}")
 
@@ -178,9 +218,17 @@ for i in range(args.eval_episodes):
     
     log_this_ep = args.debug_log and i == 0
     ep_actions = []
-    ep_horiz = []
-    ep_dz = []
-    ep_vel = []
+    
+    # Track different metrics based on environment type
+    if args.env_type == "grasp":
+        ep_vertical_dist = []
+        ep_horizontal_dist = []
+        ep_grasped = []
+        ep_ground_contact = []
+        ep_vel = []
+    else:
+        ep_horiz = []
+        ep_dz = []
 
     for step in range(VALID_MAX_STEPS):
         action, _ = model.predict(obs, deterministic=(not args.stochastic))
@@ -188,17 +236,30 @@ for i in range(args.eval_episodes):
         obs, r, term, trunc, info = env.step(action)
         
         ep_actions.append(np.array(action).ravel())
-        ep_horiz.append(info.get("horizontal_dist", np.nan))
-        ep_dz.append(info.get("dz", np.nan))
-        ep_vel.append(info.get("velocity", np.nan))
         total_r += r
         total_r_inner += r
         ep_length += 1
         success = term
         
-        if log_this_ep and step % 10 == 0:
-            print(f"  Step {step}: action={action} horiz_dist={info.get('horizontal_dist', 0.0):.4f} "
-                  f"dz={info.get('dz', 0.0):.4f} reward={r:.4f}")
+        # Track environment-specific metrics
+        if args.env_type == "grasp":
+            ep_vertical_dist.append(info.get("vertical_dist", np.nan))
+            ep_horizontal_dist.append(info.get("horizontal_dist", np.nan))
+            ep_grasped.append(info.get("grasped", False))
+            ep_ground_contact.append(info.get("ground_contact", False))
+            ep_vel.append(info.get("gripper_velocity", np.nan))
+            
+            if log_this_ep and step % 10 == 0:
+                print(f"  Step {step}: action={action} vertical_dist={info.get('vertical_dist', 0.0):.4f} "
+                      f"horizontal_dist={info.get('horizontal_dist', 0.0):.4f} grasped={info.get('grasped', False)} "
+                      f"ground_contact={info.get('ground_contact', False)} reward={r:.4f}")
+        else:
+            ep_horiz.append(info.get("horizontal_dist", np.nan))
+            ep_dz.append(info.get("dz", np.nan))
+            
+            if log_this_ep and step % 10 == 0:
+                print(f"  Step {step}: action={action} horiz_dist={info.get('horizontal_dist', 0.0):.4f} "
+                      f"dz={info.get('dz', 0.0):.4f} reward={r:.4f}")
 
         if args.render_video:
             frame = env.render()
@@ -206,13 +267,18 @@ for i in range(args.eval_episodes):
                 frames.append(frame)
 
         if term or trunc:
-            successes += int(term)
+            # For grasping env, success is when grasped
+            if args.env_type == "grasp":
+                successes += int(info.get("grasped", False))
+            else:
+                successes += int(term)
             obs, info = env.reset()
             break
 
     # Save video if frames were collected
     if args.render_video and len(frames) > 0:
-        video_path = os.path.join(VIDEO_DIR, f"validation_ep_{i:03d}.mp4")
+        video_prefix = "validation_grasp_ep" if args.env_type == "grasp" else "validation_ep"
+        video_path = os.path.join(VIDEO_DIR, f"{video_prefix}_{i:03d}.mp4")
         h, w = frames[0].shape[:2]
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(video_path, fourcc, 30.0, (w, h))
@@ -230,9 +296,17 @@ for i in range(args.eval_episodes):
         act_std = acts.std(axis=0)
         print(f"Eval {i}: total_reward: {total_r_inner:.2f}, ep_length: {ep_length}, success: {success}")
         print(f"  action mean: {act_mean} std: {act_std}")
-        print(f"  horiz dist mean: {np.nanmean(ep_horiz):.4f} std: {np.nanstd(ep_horiz):.4f}")
-        print(f"  dz mean: {np.nanmean(ep_dz):.4f} std: {np.nanstd(ep_dz):.4f}")
-        print(f"  final dist: {ep_horiz[-1]:.4f} vel: {ep_vel[-1]} acc: {(ep_vel[-2] - ep_vel[-1])*60. if len(ep_vel) > 1 else np.nan}")
+        
+        if args.env_type == "grasp":
+            print(f"  vertical dist mean: {np.nanmean(ep_vertical_dist):.4f} std: {np.nanstd(ep_vertical_dist):.4f}")
+            print(f"  horizontal dist mean: {np.nanmean(ep_horizontal_dist):.4f} std: {np.nanstd(ep_horizontal_dist):.4f}")
+            print(f"  grasped: {sum(ep_grasped)}/{len(ep_grasped)} steps, ground_contact: {sum(ep_ground_contact)}/{len(ep_ground_contact)} steps")
+            print(f"  final vertical_dist: {ep_vertical_dist[-1]:.4f} horizontal_dist: {ep_horizontal_dist[-1]:.4f}")
+            if len(ep_vel) > 0 and not (isinstance(ep_vel[-1], np.ndarray) and np.isnan(ep_vel[-1]).any()):
+                print(f"  final velocity: {ep_vel[-1]}")
+        else:
+            print(f"  horiz dist mean: {np.nanmean(ep_horiz):.4f} std: {np.nanstd(ep_horiz):.4f}")
+            print(f"  dz mean: {np.nanmean(ep_dz):.4f} std: {np.nanstd(ep_dz):.4f}")
     else:
         print(f"Eval {i}: total_reward: {total_r_inner:.2f}, ep_length: {ep_length}, success: {success}")
 
