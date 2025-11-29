@@ -161,10 +161,10 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         scaled_action = action_clipped * self.ctrl_scale
 
         # Apply actions to actuators (no hard constraint - agent has full control)
-        self.data.ctrl[self.updown] = scaled_action[0]
-        self.data.ctrl[self.leftright] = scaled_action[1]
-        self.data.ctrl[self.forwardback] = scaled_action[2]
-        self.data.ctrl[self.finger] = scaled_action[3]
+        self.data.ctrl[self.updown] = 0.0 * scaled_action[0]
+        self.data.ctrl[self.leftright] = 0.0 * scaled_action[1]
+        self.data.ctrl[self.forwardback] = 0.0 * scaled_action[2]
+        self.data.ctrl[self.finger] = 0.0 * scaled_action[3]
         
         # Advance physics
         for i in range(1, 10):
@@ -368,14 +368,14 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         gripper_height = TARGET_HEIGHT_ABOVE_TARGET + np.random.uniform(-INITIAL_HEIGHT_NOISE, INITIAL_HEIGHT_NOISE)
 
         # Small position noise - much smaller than before to help initial learning
-        pos_noise_x = np.random.uniform(-INITIAL_POSITION_NOISE_RANGE, INITIAL_POSITION_NOISE_RANGE)
-        pos_noise_y = np.random.uniform(-INITIAL_POSITION_NOISE_RANGE, INITIAL_POSITION_NOISE_RANGE)
+        pos_noise_x = np.random.uniform(-INITIAL_POSITION_NOISE_RANGE, INITIAL_POSITION_NOISE_RANGE) * 0.0
+        pos_noise_y = np.random.uniform(-INITIAL_POSITION_NOISE_RANGE, INITIAL_POSITION_NOISE_RANGE) * 0.0
 
         # Set gripper position aligned above target with noise
-        self.data.qpos[lr_adr] = target_pos[0] + pos_noise_x
-        self.data.qpos[fb_adr] = target_pos[1] + pos_noise_y
+        self.data.qpos[lr_adr] = target_pos[0]
+        self.data.qpos[fb_adr] = target_pos[1]
         self.data.qpos[ud_adr] = -(0.3 - gripper_height)
-
+        '''
         # Set fingers to closed position
         self.data.qpos[left_adr] = FINGER_CLOSE_POSITION
         self.data.qpos[right_adr] = FINGER_CLOSE_POSITION
@@ -390,8 +390,8 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
 
         # Set finger actuator to maintain closed position
         self.data.ctrl[self.finger] = FINGER_CLOSE_COMMAND
-
-        self.data.qvel[:] = np.random.uniform(-INITIAL_POSITION_NOISE_RANGE, INITIAL_POSITION_NOISE_RANGE)
+        '''
+        self.data.qvel[:] = 0.0 * np.random.uniform(-INITIAL_POSITION_NOISE_RANGE, INITIAL_POSITION_NOISE_RANGE)
 
         # Propagate physics
         mujoco.mj_forward(self.model, self.data)
