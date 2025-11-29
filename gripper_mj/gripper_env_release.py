@@ -29,7 +29,7 @@ FINGER_CLOSE_COMMAND = 0.8  # Actuator command to close fingers
 FINGER_CLOSE_POSITION = 0.015  # Joint position for closed fingers
 
 # Initialization parameters - target offset range (gripper stays fixed)
-TARGET_OFFSET_RANGE = SUCCESS_THRESHOLD  # Horizontal offset range for target from gripper center
+TARGET_OFFSET_RANGE = SUCCESS_THRESHOLD * 2.0  # Horizontal offset range for target from gripper center
 
 # Block landing detection
 BLOCK_ON_GROUND_HEIGHT = BLOCK_DIMENSION + 0.01  # Block resting on ground (with small tolerance)
@@ -262,12 +262,12 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         
         # Precision bonus when very close
         if horizontal_dist < 3 * SUCCESS_THRESHOLD and grasped:
-            position_reward += 3.0 * np.exp(-20.0 * horizontal_dist)
+            position_reward += 4.0 * np.exp(-20.0 * horizontal_dist)
         
         # 2. HEIGHT REWARD (using gripper height above target)
         height_reward = 0.0
         if grasped:
-            height_reward = -height_error * 3.0
+            height_reward = -height_error * 5.0
             
             # Penalty for too low
             if gripper_height_above_target < MIN_ABOVE_TARGET:
@@ -410,17 +410,18 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         # Let physics settle for grasp
         for _ in range(20):
             self.data.ctrl[self.finger] = FINGER_CLOSE_COMMAND
-            self.data.ctrl[self.updown] = 0.0
-            self.data.ctrl[self.leftright] = 0.0
-            self.data.ctrl[self.forwardback] = 0.0
+            #self.data.ctrl[self.updown] = 0.0
+            #self.data.ctrl[self.leftright] = 0.0
+            #self.data.ctrl[self.forwardback] = 0.0
             mujoco.mj_step(self.model, self.data)
         
         # Set finger actuator to maintain closed position
         self.data.ctrl[self.finger] = FINGER_CLOSE_COMMAND
+        '''
         self.data.ctrl[self.updown] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 0.0
         self.data.ctrl[self.leftright] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 0.0
         self.data.ctrl[self.forwardback] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 0.0
-
+        '''
 
         # Check if grasp was successful
         self.initial_grasp_success = self._check_grasped()
