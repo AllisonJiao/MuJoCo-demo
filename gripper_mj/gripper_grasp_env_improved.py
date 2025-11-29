@@ -129,10 +129,12 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         # Action space: [up/down, finger] or [up/down, xy_adjust_x, xy_adjust_y, finger]
         if allow_xy_adjust:
             self.action_space = spaces.Box(low=-1, high=1, shape=(4,), dtype=np.float32)
-            self.ctrl_scale = np.array([1, 1, 1, 1], dtype=float)  # Small XY adjustments
+            # XY adjustments should be MUCH smaller than vertical movement
+            # This encourages the gripper to focus on descending first, then small corrections
+            self.ctrl_scale = np.array([1.0, 0.1, 0.1, 1.0], dtype=float)  # [up/down, xy_x (small), xy_y (small), finger]
         else:
             self.action_space = spaces.Box(low=-1, high=1, shape=(2,), dtype=np.float32)
-            self.ctrl_scale = np.array([1, 1], dtype=float)  # [up/down, finger]
+            self.ctrl_scale = np.array([1.0, 1.0], dtype=float)  # [up/down, finger]
         
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, 
@@ -273,21 +275,22 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         if self.allow_xy_adjust:
             # [up/down, xy_x, xy_y, finger]
             self.data.ctrl[self.updown] = action_scaled[0]
-            # Small XY adjustments (reduced scale)
+            # Small XY adjustments (scale already applied in ctrl_scale)
             self.data.ctrl[self.leftright] = action_scaled[1]
             self.data.ctrl[self.forwardback] = action_scaled[2]
-            # Finger control
-            finger_control = action_scaled[3]
-            finger_control = self.finger_open + finger_control * (self.finger_close - self.finger_open)
+            # Finger control: map from [-1, 1] to [finger_open, finger_close]
+            # action[3] is in [-1, 1], normalize to [0, 1] first
+            finger_normalized = (action[3] + 1.0) / 2.0  # [0, 1]
+            finger_control = self.finger_open + finger_normalized * (self.finger_close - self.finger_open)
             self.data.ctrl[self.finger] = finger_control
         else:
             # [up/down, finger] - no XY movement
             self.data.ctrl[self.updown] = action_scaled[0]
             self.data.ctrl[self.leftright] = 0.0  # Keep centered
             self.data.ctrl[self.forwardback] = 0.0  # Keep centered
-            # Finger control
-            finger_control = action_scaled[1]
-            finger_control = self.finger_open + finger_control * (self.finger_close - self.finger_open)
+            # Finger control: map from [-1, 1] to [finger_open, finger_close]
+            finger_normalized = (action[1] + 1.0) / 2.0  # [0, 1]
+            finger_control = self.finger_open + finger_normalized * (self.finger_close - self.finger_open)
             self.data.ctrl[self.finger] = finger_control
 
         # Advance physics
@@ -409,14 +412,28 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         # Progress reward: reward for getting closer to ground (descending)
         progress_reward = 0.0
         stuck_penalty = 0.0
+        horizontal_penalty = 0.0
+        horizontal_centering_reward = 0.0
+        
         if self.prev_gripper_height is not None:
             height_change = self.prev_gripper_height - gripper_height  # Positive = descending
-            progress_reward = height_change * 2.0  # Reward descending
+            progress_reward = height_change * 5.0  # Reward descending (stronger)
             
             # Stuck penalty: if gripper height hasn't changed much
             if abs(gripper_height - self.prev_gripper_height) < STUCK_THRESHOLD:
                 if not ground_contact:  # Only penalize if not touching ground yet
                     stuck_penalty = -STUCK_PENALTY
+        
+        # Penalize increasing horizontal distance from block (moving away)
+        # Reward decreasing horizontal distance (centering)
+        if self.prev_horizontal_dist is not None and self.allow_xy_adjust:
+            horizontal_change = horizontal_dist - self.prev_horizontal_dist  # Positive = moving away
+            if horizontal_change > 0:
+                # Penalize moving away from the block (strong penalty)
+                horizontal_penalty = -horizontal_change * 20.0
+            elif horizontal_change < 0:
+                # Reward getting closer to centered (centering bonus)
+                horizontal_centering_reward = -horizontal_change * 3.0  # Negative change = positive reward
         
         # Update previous values
         self.prev_gripper_height = gripper_height
@@ -480,12 +497,22 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         if vertical_dist < 0 and not ground_contact:
             reward -= 0.5
         
-        # Small penalty for horizontal misalignment (if allowed)
-        if self.allow_xy_adjust and horizontal_dist > SUCCESS_THRESHOLD:
-            reward -= 0.1 * horizontal_dist
+        # STRONGER penalty for horizontal misalignment
+        # The gripper should stay centered over the block during descent
+        if self.allow_xy_adjust:
+            # Continuous penalty based on horizontal distance (stronger)
+            reward -= 2.0 * horizontal_dist
+            
+            # Extra penalty for large horizontal deviation
+            if horizontal_dist > SUCCESS_THRESHOLD:
+                reward -= 1.0 * (horizontal_dist - SUCCESS_THRESHOLD)
+        
+        # Reward for staying centered (small horizontal distance)
+        if horizontal_dist < SUCCESS_THRESHOLD:
+            reward += 0.5  # Bonus for being well-centered
         
         # Combine all reward components
-        reward = reward + progress_reward + stuck_penalty + precision_bonus
+        reward = reward + progress_reward + stuck_penalty + horizontal_penalty + horizontal_centering_reward + precision_bonus
         
         # Step penalty to encourage efficiency
         reward -= 0.01
@@ -507,6 +534,8 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             "gripper_height": gripper_xyz[2],
             "progress_reward": progress_reward,
             "stuck_penalty": stuck_penalty,
+            "horizontal_penalty": horizontal_penalty,
+            "horizontal_centering_reward": horizontal_centering_reward,
             "precision_bonus": precision_bonus,
             "gripper_velocity": gripper_vel
         }
