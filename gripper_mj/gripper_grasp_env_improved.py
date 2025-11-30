@@ -185,6 +185,8 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         left_finger_pos = self.data.xpos[self.left_finger]
         right_finger_pos = self.data.xpos[self.right_finger]
         gripper_pos = self.data.xpos[self.gripper][:3]
+
+        finger_dist = np.linalg.norm((right_finger_pos - left_finger_pos)[:2])
         
         # Calculate direction vector from left finger to right finger (inner direction)
         # This defines which side is "inner" for each finger
@@ -257,7 +259,8 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         close_to_ground = gripper_pos[2] <= MAX_HEIGHT and gripper_pos[2] >= MIN_HEIGHT
         
         # Success: BOTH fingers must contact block on INNER sides AND close to ground
-        if left_finger_inner_contact and right_finger_inner_contact and close_to_ground:
+        if left_finger_inner_contact and right_finger_inner_contact and \
+            close_to_ground and (finger_dist > (BLOCK_DIMENSION * 2.0) * 0.9):
             return True
         
         # No fallback - strict requirement for both fingers on inner sides
@@ -424,7 +427,11 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         # REWARD 2: Height reward (scale: -1 to +1)
         # Reward being at ideal height, penalize being too high/low
         # ============================================================
-        height_reward = -2.0 * (np.exp(5.0 * abs(vertical_dist)) - 1.0)
+        
+        if gripper_height > MAX_HEIGHT or gripper_height < MIN_HEIGHT:
+            height_reward = -5.0 * abs(vertical_dist)
+        else:
+            height_reward = 2.0 * np.exp(5.0 * abs(vertical_dist))
         reward += height_reward
         
         # ============================================================
@@ -443,13 +450,16 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         # REWARD 4: Success bonus (+5)
         # ============================================================
         if grasped:
-            reward += 5.0
+            reward += 10.0
+
+        if gripper_height < 0.07:
+            reward -= 50.0  # Heavy penalty for crashing to ground
         
         # Small step penalty
         reward -= 0.01
         # Termination
         terminated = grasped
-        truncated = self.step_count >= self.max_steps
+        truncated = self.step_count >= self.max_steps or gripper_height < 0.07
         
         info = {
             "grasped": grasped,
