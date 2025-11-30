@@ -214,7 +214,8 @@ def generate_comparative_histograms(
         
         # Handle case where all values are the same
         if min_val == max_val:
-            bins = 10
+            # Use a single bin centered on the value with a small range
+            bins = np.array([min_val - 0.5, min_val + 0.5])
         else:
             bins = np.linspace(min_val, max_val, 31)
         
@@ -354,9 +355,11 @@ def main():
             num_episodes=args.episodes
         )
     else:
-        # Default: run comparison between hover and lift stage models
-        print("Running default comparison: Hover model vs Lift model")
-        print("(Use --model1, --model2, --env-type to specify custom models)\n")
+        # Default: run individual validation tests on hover and lift stage models
+        # When only one model is available, we run validation and compare two independent runs
+        # This demonstrates the infrastructure and allows checking model consistency
+        print("Running default validation: Testing Hover and Lift models individually")
+        print("(Use --model1, --model2, --env-type to specify models for comparison)\n")
         
         # Check if default models exist
         hover_exists = os.path.exists(default_hover_path)
@@ -367,13 +370,13 @@ def main():
         if not lift_exists:
             print(f"Warning: Lift model not found at {default_lift_path}")
         
-        # Run hover model comparison (if model exists)
+        # Run hover model validation (if model exists)
         if hover_exists:
             print("\n" + "="*60)
-            print("Testing Hover model on hover environment")
+            print("Validating Hover model on hover environment")
             print("="*60)
-            # For a single model test, we compare the model against itself
-            # This demonstrates the infrastructure works
+            # Run two independent validation runs to check consistency
+            # In practice, users should provide two different model paths for meaningful comparison
             output_hover = os.path.join(script_dir, "comparison_hover_validation.png")
             compare_models(
                 model1_path=default_hover_path,
@@ -385,11 +388,12 @@ def main():
                 num_episodes=args.episodes
             )
         
-        # Run lift model comparison (if model exists)
+        # Run lift model validation (if model exists)
         if lift_exists:
             print("\n" + "="*60)
-            print("Testing Lift model on lift environment")
+            print("Validating Lift model on lift environment")
             print("="*60)
+            # Run two independent validation runs to check consistency
             output_lift = os.path.join(script_dir, "comparison_lift_validation.png")
             compare_models(
                 model1_path=default_lift_path,
