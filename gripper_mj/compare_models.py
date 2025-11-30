@@ -11,10 +11,12 @@ Supported environment types:
 - "release": GripperReleaseEnv from gripper_env_release.py
 
 Usage:
-    python compare_models.py --model1 <path1> --model2 <path2> --env-type <type>
+    python compare_models.py --model1 <path1> --model2 <path2> --env-type <type> --name1 <name1> --name2 <name2>
     
     Or run default comparison (hover vs lift):
     python compare_models.py
+
+Output images are saved to gripper_mj/comparison_results/ directory.
 """
 
 import os
@@ -34,6 +36,7 @@ from gripper_env_release import GripperReleaseEnv
 # Constants
 VALIDATION_EPISODES = 1000
 MAX_STEPS = 500
+OUTPUT_DIR = "comparison_results"  # Subdirectory for output images
 
 
 def create_env(env_type: str):
@@ -71,6 +74,7 @@ def run_validation(model_path: str, env_type: str, num_episodes: int = VALIDATIO
         - rewards: List of total episode rewards
         - final_horizontal_dist: List of final horizontal distances
         - final_velocity: List of final velocities (if available)
+        - successes: List of success flags (1 if terminated, 0 otherwise)
     """
     # Create environment
     env = create_env(env_type)
@@ -83,7 +87,8 @@ def run_validation(model_path: str, env_type: str, num_episodes: int = VALIDATIO
         "episode_lengths": [],
         "rewards": [],
         "final_horizontal_dist": [],
-        "final_velocity": []
+        "final_velocity": [],
+        "successes": []
     }
     
     print(f"Running {num_episodes} validation episodes for model: {model_path}")
@@ -94,6 +99,7 @@ def run_validation(model_path: str, env_type: str, num_episodes: int = VALIDATIO
         ep_length = 0
         final_horiz_dist = np.nan
         final_velocity = np.nan
+        success = 0
         
         for step in range(MAX_STEPS):
             action, _ = model.predict(obs, deterministic=True)
@@ -120,6 +126,8 @@ def run_validation(model_path: str, env_type: str, num_episodes: int = VALIDATIO
                     final_velocity = float(vel) if vel is not None else np.nan
             
             if terminated or truncated:
+                # Success is when terminated (not truncated)
+                success = 1 if terminated else 0
                 break
         
         # Store results
@@ -127,6 +135,7 @@ def run_validation(model_path: str, env_type: str, num_episodes: int = VALIDATIO
         results["rewards"].append(total_reward)
         results["final_horizontal_dist"].append(final_horiz_dist)
         results["final_velocity"].append(final_velocity)
+        results["successes"].append(success)
         
         # Progress indicator
         if (ep + 1) % 100 == 0:
@@ -142,7 +151,9 @@ def generate_comparative_histograms(
     label1: str,
     label2: str,
     output_path: str,
-    title_prefix: str = ""
+    title_prefix: str = "",
+    success_rate1: float = None,
+    success_rate2: float = None
 ) -> None:
     """Generate and save comparative histograms for two models.
     
@@ -153,6 +164,8 @@ def generate_comparative_histograms(
         label2: Label for second model in plots
         output_path: Path to save the histogram image
         title_prefix: Optional prefix for plot titles
+        success_rate1: Success rate for first model (0-100%)
+        success_rate2: Success rate for second model (0-100%)
     """
     # Determine which metrics have valid data
     metrics_to_plot = []
@@ -183,7 +196,7 @@ def generate_comparative_histograms(
     cols = min(2, num_plots)
     rows = (num_plots + cols - 1) // cols
     
-    fig, axes = plt.subplots(rows, cols, figsize=(7 * cols, 5 * rows))
+    fig, axes = plt.subplots(rows, cols, figsize=(7 * cols, 5 * rows + 0.5))
     
     # Handle single subplot case
     if num_plots == 1:
@@ -191,11 +204,22 @@ def generate_comparative_histograms(
     else:
         axes = axes.flatten() if hasattr(axes, 'flatten') else [axes]
     
-    # Set main title
+    # Set main title with success rates underneath
     if title_prefix:
-        fig.suptitle(f"{title_prefix} - Model Comparison", fontsize=14, fontweight='bold')
+        main_title = f"{title_prefix} - Model Comparison"
     else:
-        fig.suptitle("Model Comparison - Validation Results Distribution", fontsize=14, fontweight='bold')
+        main_title = "Model Comparison - Validation Results Distribution"
+    
+    fig.suptitle(main_title, fontsize=14, fontweight='bold', y=0.99)
+    
+    # Add success rates as subtitle if provided
+    if success_rate1 is not None and success_rate2 is not None:
+        success_text = f"{label1} Success Rate: {success_rate1:.1f}%  |  {label2} Success Rate: {success_rate2:.1f}%"
+        fig.text(0.5, 0.96, success_text, ha='center', va='top', fontsize=11, 
+                 style='italic', color='darkgreen')
+    
+    # Adjust top margin to make room for title and success rates
+    plt.subplots_adjust(top=0.90)
     
     # Plot each metric
     for idx, metric in enumerate(metrics_to_plot):
@@ -278,35 +302,43 @@ def compare_models(
     """
     print(f"\n{'='*60}")
     print(f"Comparing models:")
-    print(f"  Model 1: {model1_path}")
-    print(f"  Model 2: {model2_path}")
+    print(f"  Model 1 ({label1}): {model1_path}")
+    print(f"  Model 2 ({label2}): {model2_path}")
     print(f"  Environment: {env_type}")
     print(f"  Episodes: {num_episodes}")
     print(f"{'='*60}\n")
     
     # Run validation for both models
-    print("Validating Model 1...")
+    print(f"Validating {label1}...")
     results1 = run_validation(model1_path, env_type, num_episodes)
     
-    print("\nValidating Model 2...")
+    print(f"\nValidating {label2}...")
     results2 = run_validation(model2_path, env_type, num_episodes)
+    
+    # Calculate success rates
+    success_rate1 = 100.0 * sum(results1["successes"]) / len(results1["successes"])
+    success_rate2 = 100.0 * sum(results2["successes"]) / len(results2["successes"])
     
     # Generate output path if not provided
     if output_path is None:
-        output_dir = os.path.dirname(os.path.abspath(__file__))
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        output_dir = os.path.join(script_dir, OUTPUT_DIR)
+        os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, f"comparison_{env_type}_{label1.replace(' ', '_')}_vs_{label2.replace(' ', '_')}.png")
     
-    # Generate histograms
+    # Generate histograms with success rates
     title_prefix = f"{env_type.capitalize()} Environment"
-    generate_comparative_histograms(results1, results2, label1, label2, output_path, title_prefix)
+    generate_comparative_histograms(results1, results2, label1, label2, output_path, title_prefix,
+                                    success_rate1=success_rate1, success_rate2=success_rate2)
     
     # Print summary statistics
     print(f"\n{'='*60}")
     print("Summary Statistics:")
     print(f"{'='*60}")
     
-    for label, results in [(label1, results1), (label2, results2)]:
+    for label, results, success_rate in [(label1, results1, success_rate1), (label2, results2, success_rate2)]:
         print(f"\n{label}:")
+        print(f"  Success Rate: {success_rate:.1f}%")
         print(f"  Episode Length: mean={np.mean(results['episode_lengths']):.2f}, std={np.std(results['episode_lengths']):.2f}")
         print(f"  Reward: mean={np.mean(results['rewards']):.2f}, std={np.std(results['rewards']):.2f}")
         
@@ -331,8 +363,8 @@ def main():
     parser.add_argument("--env-type", type=str, default=None, 
                         choices=["hover", "grasp", "lift", "release"],
                         help="Environment type for validation")
-    parser.add_argument("--label1", type=str, default="Model 1", help="Label for first model")
-    parser.add_argument("--label2", type=str, default="Model 2", help="Label for second model")
+    parser.add_argument("--name1", type=str, default=None, help="Name for first model (used in legend)")
+    parser.add_argument("--name2", type=str, default=None, help="Name for second model (used in legend)")
     parser.add_argument("--output", type=str, default=None, help="Output path for histogram image")
     parser.add_argument("--episodes", type=int, default=VALIDATION_EPISODES, 
                         help=f"Number of validation episodes (default: {VALIDATION_EPISODES})")
@@ -343,14 +375,21 @@ def main():
     default_hover_path = os.path.join(script_dir, "checkpoints", "ppo_model_final.zip")
     default_lift_path = os.path.join(script_dir, "checkpoints_lift", "ppo_lift_model_final.zip")
     
+    # Create output directory
+    output_dir = os.path.join(script_dir, OUTPUT_DIR)
+    os.makedirs(output_dir, exist_ok=True)
+    
     # If both models are provided, run single comparison
     if args.model1 and args.model2 and args.env_type:
+        # Use provided names or default to "Model 1" / "Model 2"
+        label1 = args.name1 if args.name1 else "Model 1"
+        label2 = args.name2 if args.name2 else "Model 2"
         compare_models(
             model1_path=args.model1,
             model2_path=args.model2,
             env_type=args.env_type,
-            label1=args.label1,
-            label2=args.label2,
+            label1=label1,
+            label2=label2,
             output_path=args.output,
             num_episodes=args.episodes
         )
@@ -377,7 +416,7 @@ def main():
             print("="*60)
             # Run two independent validation runs to check consistency
             # In practice, users should provide two different model paths for meaningful comparison
-            output_hover = os.path.join(script_dir, "comparison_hover_validation.png")
+            output_hover = os.path.join(output_dir, "comparison_hover_validation.png")
             compare_models(
                 model1_path=default_hover_path,
                 model2_path=default_hover_path,
@@ -394,7 +433,7 @@ def main():
             print("Validating Lift model on lift environment")
             print("="*60)
             # Run two independent validation runs to check consistency
-            output_lift = os.path.join(script_dir, "comparison_lift_validation.png")
+            output_lift = os.path.join(output_dir, "comparison_lift_validation.png")
             compare_models(
                 model1_path=default_lift_path,
                 model2_path=default_lift_path,
