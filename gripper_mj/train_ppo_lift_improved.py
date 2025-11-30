@@ -9,6 +9,7 @@ import numpy as np
 from pathlib import Path
 import cv2
 from gripper_env_lift_improved import GripperLiftEnv  # Lift environment
+from callbacks import RewardLoggingCallback
 
 TRAIN_EPS = 100000
 VALID_EPS = 10
@@ -119,10 +120,13 @@ if not args.eval_only:
         verbose=1
     )
 
+    reward_log_path = os.path.join(CHECKPOINT_DIR, "reward_log_lift.csv")
+    reward_logger = RewardLoggingCallback(log_path=reward_log_path, verbose=1)
+
     # Train with callbacks
     model.learn(
         total_timesteps=int(args.train_timesteps),
-        callback=[checkpoint_callback, pytorch_callback]
+        callback=[checkpoint_callback, pytorch_callback, reward_logger]
     )
 
     # Save final model

@@ -4,10 +4,15 @@
 # Checkpoints and model files
 gripper_mj/checkpoints/
 gripper_mj/checkpoints_lift/
+gripper_mj/checkpoints_release/
+gripper_mj/checkpoints_sac_lift/
+gripper_mj/checkpoints_sac_release/
+gripper_mj/checkpoints_sac_position/
 gripper_mj/videos/
 gripper_mj/videos_grasp/
 gripper_mj/videos_lift/
 gripper_mj/videos_release/
+gripper_mj/videos_sac/
 gripper_mj/test/
 **/checkpoints/
 # Model checkpoint files
@@ -17,3 +22,5 @@ gripper_mj/test/
 *_model.pt
 *_vec_normalize.pkl
 
+# Log files
+reward_log_*.csv

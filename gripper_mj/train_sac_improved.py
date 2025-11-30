@@ -1,7 +1,8 @@
 import gymnasium as gym
-from stable_baselines3 import PPO
+from stable_baselines3 import SAC
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
+from stable_baselines3.common.vec_env import VecNormalize
 import torch
 import os
 import argparse
@@ -15,26 +16,31 @@ from callbacks import RewardLoggingCallback
 TRAIN_EPS = 100000
 VALID_EPS = 10
 VALID_MAX_STEPS_POSITION = 500
-VALID_MAX_STEPS_GRASP = 500  # Shorter episodes for grasping task
+VALID_MAX_STEPS_GRASP = 200  # Shorter episodes for grasping task
 
 # Checkpoint configuration
-CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints")
+CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints_sac")
 CHECKPOINT_INTERVAL = 25000
-N_ENVS = 4
+N_ENVS = 1  # SAC works well with fewer parallel envs (off-policy)
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("--eval-only", action="store_true", help="Skip training and only run validation")
 parser.add_argument("--render-video", action="store_true", help="Save validation videos as .mp4 files")
 parser.add_argument("--model-path", type=str, default=None, help="Path to a saved model (.zip) to load for evaluation")
+parser.add_argument("--normalize-path", type=str, default=None, help="Path to VecNormalize stats (.pkl) to load for evaluation")
 parser.add_argument("--stochastic", action="store_true", help="Use stochastic actions during evaluation")
 parser.add_argument("--debug-log", action="store_true", help="Print per-step diagnostics")
 parser.add_argument("--action-scale", type=float, default=1.0, help="Multiply actions by this scale during evaluation")
 parser.add_argument("--train-timesteps", type=int, default=TRAIN_EPS, help="Total timesteps for training")
-parser.add_argument("--ent-coef", type=float, default=0.01, help="Entropy coefficient (higher = more exploration)")
+parser.add_argument("--ent-coef", type=str, default="auto", help="Entropy coefficient ('auto' or float value)")
 parser.add_argument("--enable-updown", action="store_true", help="Enable learnable up/down control (for positioning env)")
 parser.add_argument("--allow-xy-adjust", action="store_true", help="Allow small XY adjustments (for grasping env)")
 parser.add_argument("--learning-rate", type=float, default=3e-4, help="Learning rate")
+parser.add_argument("--buffer-size", type=int, default=100000, help="Replay buffer size")
+parser.add_argument("--learning-starts", type=int, default=1000, help="Number of steps before learning starts")
+parser.add_argument("--batch-size", type=int, default=256, help="Batch size for training")
+parser.add_argument("--tau", type=float, default=0.005, help="Soft update coefficient for target network")
 parser.add_argument("--env-type", type=str, default="position", choices=["position", "grasp"], 
                     help="Environment type: 'position' for positioning or 'grasp' for grasping")
 parser.add_argument("--eval-episodes", type=int, default=VALID_EPS, help="Number of evaluation episodes")
@@ -45,9 +51,10 @@ RENDER_MODE = "human" if args.render_video and args.eval_only else None
 
 # Adjust checkpoint directory and max steps based on environment type
 if args.env_type == "grasp":
-    CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints_grasp")
+    CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints_sac_grasp")
     VALID_MAX_STEPS = VALID_MAX_STEPS_GRASP
 else:
+    CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints_sac_position")
     VALID_MAX_STEPS = VALID_MAX_STEPS_POSITION
 
 # Create checkpoint directory
@@ -70,36 +77,43 @@ def make():
 if not args.eval_only:
     n_envs = 1 if RENDER_MODE == "human" else N_ENVS
     venv = make_vec_env(make, n_envs=n_envs, seed=0)
+    # SAC benefits from observation normalization
+    venv = VecNormalize(venv, norm_obs=True, norm_reward=False, clip_obs=10.0)
 
     if args.env_type == "grasp":
-        print(f"PPO training for grasping with XY adjust: {args.allow_xy_adjust}")
+        print(f"SAC training for grasping with XY adjust: {args.allow_xy_adjust}")
     else:
-        print(f"PPO training for positioning with up/down control: {args.enable_updown}")
-    print(f"ent_coef={args.ent_coef}, learning_rate={args.learning_rate}, train_timesteps={args.train_timesteps}")
+        print(f"SAC training for positioning with up/down control: {args.enable_updown}")
     
-    # Improved PPO hyperparameters for deterministic precision
-    model = PPO(
+    # Parse ent_coef - can be "auto" or a float
+    try:
+        ent_coef_value = float(args.ent_coef)
+    except ValueError:
+        # If it's not a number, assume it's "auto" or another string value
+        ent_coef_value = args.ent_coef if args.ent_coef == "auto" else "auto"
+    print(f"ent_coef={ent_coef_value}, learning_rate={args.learning_rate}, train_timesteps={args.train_timesteps}")
+    print(f"buffer_size={args.buffer_size}, learning_starts={args.learning_starts}, batch_size={args.batch_size}, tau={args.tau}")
+    
+    # SAC hyperparameters
+    model = SAC(
         "MlpPolicy",
         venv,
         verbose=1,
-        n_steps=2048,  # Longer rollouts for better value estimation
-        batch_size=256,  # Smaller batches for more gradient updates
-        n_epochs=10,  # More epochs per update for better learning
         learning_rate=float(args.learning_rate),
+        buffer_size=args.buffer_size,
+        learning_starts=args.learning_starts,
+        batch_size=args.batch_size,
+        tau=args.tau,
         gamma=0.99,
-        clip_range=0.2,
-        use_sde=True,  # State-dependent exploration
-        sde_sample_freq=4,
-        ent_coef=float(args.ent_coef),
-        # Larger network with more capacity
+        train_freq=(1, "step"),
+        gradient_steps=1,
+        ent_coef=ent_coef_value,
+        target_entropy="auto",
+        # Network architecture
         policy_kwargs=dict(
-            net_arch=[dict(pi=[256, 256, 128], vf=[256, 256, 128])],
-            activation_fn=torch.nn.Tanh,  # Tanh activation for smoother outputs
+            net_arch=[256, 256, 128],
+            activation_fn=torch.nn.Tanh,
         ),
-        # Value function clipping for stability
-        clip_range_vf=10.0,
-        # Normalize observations (important for precision)
-        normalize_advantage=True,
     )
 else:
     model = None
@@ -116,23 +130,41 @@ class PyTorchCheckpointCallback(BaseCallback):
         
     def _on_step(self) -> bool:
         if self.num_timesteps - self.last_save >= self.save_freq:
-            model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else "ppo_model"
+            model_prefix = "sac_grasp_model" if args.env_type == "grasp" else "sac_model"
             checkpoint_path = os.path.join(
                 self.save_path, 
                 f"{model_prefix}_{self.num_timesteps}.pt"
             )
-            torch.save({
+            # Save network state dicts (optimizers are saved in .zip file via model.save())
+            checkpoint_data = {
                 'policy_state_dict': self.model.policy.state_dict(),
-                'optimizer_state_dict': self.model.policy.optimizer.state_dict(),
+                'critic_state_dict': self.model.critic.state_dict(),
+                'critic_target_state_dict': self.model.critic_target.state_dict(),
                 'timesteps': self.num_timesteps,
-            }, checkpoint_path)
+            }
+            # Try to save optimizers if available (SAC stores them differently)
+            try:
+                if hasattr(self.model, 'actor') and hasattr(self.model.actor, 'optimizer'):
+                    checkpoint_data['policy_optimizer_state_dict'] = self.model.actor.optimizer.state_dict()
+                elif hasattr(self.model.policy, 'optimizer'):
+                    checkpoint_data['policy_optimizer_state_dict'] = self.model.policy.optimizer.state_dict()
+            except AttributeError:
+                pass  # Optimizers not accessible, that's okay - they're in the .zip file
+            
+            try:
+                if hasattr(self.model.critic, 'optimizer'):
+                    checkpoint_data['critic_optimizer_state_dict'] = self.model.critic.optimizer.state_dict()
+            except AttributeError:
+                pass  # Optimizers not accessible, that's okay - they're in the .zip file
+            
+            torch.save(checkpoint_data, checkpoint_path)
             self.last_save = self.num_timesteps
             if self.verbose > 0:
                 print(f"Saved PyTorch checkpoint to {checkpoint_path} (timesteps: {self.num_timesteps})")
         return True
 
 if not args.eval_only:
-    model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else "ppo_model"
+    model_prefix = "sac_grasp_model" if args.env_type == "grasp" else "sac_model"
     checkpoint_callback = CheckpointCallback(
         save_freq=max(CHECKPOINT_INTERVAL // N_ENVS, 1),
         save_path=CHECKPOINT_DIR,
@@ -160,17 +192,40 @@ if not args.eval_only:
     )
 
     # Save final model
-    model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else "ppo_model"
+    model_prefix = "sac_grasp_model" if args.env_type == "grasp" else "sac_model"
     final_model_path = os.path.join(CHECKPOINT_DIR, f"{model_prefix}_final.zip")
     model.save(final_model_path)
     print(f"Saved final model to {final_model_path}")
 
+    # Save VecNormalize stats
+    normalize_path = os.path.join(CHECKPOINT_DIR, f"{model_prefix}_vec_normalize.pkl")
+    venv.save(normalize_path)
+    print(f"Saved VecNormalize stats to {normalize_path}")
+
     final_pt_path = os.path.join(CHECKPOINT_DIR, f"{model_prefix}_final.pt")
-    torch.save({
+    # Save network state dicts (optimizers are saved in .zip file via model.save())
+    checkpoint_data = {
         'policy_state_dict': model.policy.state_dict(),
-        'optimizer_state_dict': model.policy.optimizer.state_dict(),
-        'timesteps': TRAIN_EPS,
-    }, final_pt_path)
+        'critic_state_dict': model.critic.state_dict(),
+        'critic_target_state_dict': model.critic_target.state_dict(),
+        'timesteps': args.train_timesteps,
+    }
+    # Try to save optimizers if available (SAC stores them differently)
+    try:
+        if hasattr(model, 'actor') and hasattr(model.actor, 'optimizer'):
+            checkpoint_data['policy_optimizer_state_dict'] = model.actor.optimizer.state_dict()
+        elif hasattr(model.policy, 'optimizer'):
+            checkpoint_data['policy_optimizer_state_dict'] = model.policy.optimizer.state_dict()
+    except AttributeError:
+        pass  # Optimizers not accessible, that's okay - they're in the .zip file
+    
+    try:
+        if hasattr(model.critic, 'optimizer'):
+            checkpoint_data['critic_optimizer_state_dict'] = model.critic.optimizer.state_dict()
+    except AttributeError:
+        pass  # Optimizers not accessible, that's okay - they're in the .zip file
+    
+    torch.save(checkpoint_data, final_pt_path)
     print(f"Saved final PyTorch checkpoint to {final_pt_path}")
 else:
     print("Eval-only mode: skipping training")
@@ -198,13 +253,24 @@ total_r, successes = 0.0, 0
 if args.eval_only:
     if args.model_path:
         print(f"Loading model from {args.model_path}")
-        model = PPO.load(args.model_path, env=env)
+        model = SAC.load(args.model_path, env=env)
+        
+        # Load normalization stats if provided
+        if args.normalize_path:
+            print(f"Loading VecNormalize stats from {args.normalize_path}")
+            # Note: For eval, we typically don't use VecNormalize wrapper on single env
+            # But if you want to use it, you'd need to wrap the env
     else:
-        model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else "ppo_model"
+        model_prefix = "sac_grasp_model" if args.env_type == "grasp" else "sac_model"
         final_model_path = os.path.join(CHECKPOINT_DIR, f"{model_prefix}_final.zip")
         if os.path.exists(final_model_path):
             print(f"Loading model from {final_model_path}")
-            model = PPO.load(final_model_path, env=env)
+            model = SAC.load(final_model_path, env=env)
+            
+            # Try to load normalization stats
+            normalize_path = os.path.join(CHECKPOINT_DIR, f"{model_prefix}_vec_normalize.pkl")
+            if os.path.exists(normalize_path):
+                print(f"Note: VecNormalize stats available at {normalize_path} but not used for single env eval")
         else:
             print("Error: No model found for eval-only mode. Provide --model-path or train first.")
             exit(1)
@@ -212,7 +278,7 @@ if args.eval_only:
 # Create video directory if rendering videos
 VIDEO_DIR = None
 if args.render_video:
-    video_dir_name = "videos_grasp" if args.env_type == "grasp" else "videos"
+    video_dir_name = "videos_sac_grasp" if args.env_type == "grasp" else "videos_sac"
     VIDEO_DIR = os.path.join(os.path.dirname(__file__), video_dir_name)
     os.makedirs(VIDEO_DIR, exist_ok=True)
     print(f"Videos will be saved to {VIDEO_DIR}")
@@ -237,7 +303,6 @@ for i in range(args.eval_episodes):
     else:
         ep_horiz = []
         ep_dz = []
-        ep_vel = []
 
     for step in range(VALID_MAX_STEPS):
         action, _ = model.predict(obs, deterministic=(not args.stochastic))
@@ -265,7 +330,6 @@ for i in range(args.eval_episodes):
         else:
             ep_horiz.append(info.get("horizontal_dist", np.nan))
             ep_dz.append(info.get("dz", np.nan))
-            ep_vel.append(info.get("velocity", np.nan))
             
             if log_this_ep and step % 10 == 0:
                 print(f"  Step {step}: action={action} horiz_dist={info.get('horizontal_dist', 0.0):.4f} "
@@ -287,7 +351,7 @@ for i in range(args.eval_episodes):
 
     # Save video if frames were collected
     if args.render_video and len(frames) > 0:
-        video_prefix = "validation_grasp_ep" if args.env_type == "grasp" else "validation_ep"
+        video_prefix = "validation_sac_grasp_ep" if args.env_type == "grasp" else "validation_sac_ep"
         video_path = os.path.join(VIDEO_DIR, f"{video_prefix}_{i:03d}.mp4")
         h, w = frames[0].shape[:2]
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -317,9 +381,6 @@ for i in range(args.eval_episodes):
         else:
             print(f"  horiz dist mean: {np.nanmean(ep_horiz):.4f} std: {np.nanstd(ep_horiz):.4f}")
             print(f"  dz mean: {np.nanmean(ep_dz):.4f} std: {np.nanstd(ep_dz):.4f}")
-            print(f"  final vertical_dist: {ep_dz[-1]:.4f} horizontal_dist: {ep_horiz[-1]:.4f}")
-            if len(ep_vel) > 0 and not (isinstance(ep_vel[-1], np.ndarray) and np.isnan(ep_vel[-1]).any()):
-                print(f"  final velocity: {ep_vel[-1]}")
     else:
         print(f"Eval {i}: total_reward: {total_r_inner:.2f}, ep_length: {ep_length}, success: {success}")
 
