@@ -420,12 +420,15 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         # REWARD 1: Horizontal precision (scale: 0 to +1)
         # Reward being centered over block
         # ============================================================
-        horizontal_reward = 2.0 *np.exp(-50.0 * horizontal_dist)  # 1.0 when centered, ~0.37 at 0.1m offset
-        reward += horizontal_reward
+        horizontal_reward = 0.0
+        velocity_penalty = 0.0
+        if self.allow_xy_adjust:
+            horizontal_reward = 2.0 *np.exp(-50.0 * horizontal_dist)  # 1.0 when centered, ~0.37 at 0.1m offset
+            reward += horizontal_reward
 
-        # Small velocity penalty to discourage swinging
-        velocity_penalty = -1 * (np.exp(4.0*np.linalg.norm(gripper_vel[:2]))-1.0)
-        reward += velocity_penalty
+            # Small velocity penalty to discourage swinging
+            velocity_penalty = -1 * (np.exp(4.0*np.linalg.norm(gripper_vel[:2]))-1.0)
+            reward += velocity_penalty
         
         # ============================================================
         # REWARD 2: Height reward (scale: -2 to +2)
@@ -472,11 +475,11 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             # Once gripper reached ideal height: MUST close fingers
             # Cannot shift horizontally to escape and gain open-finger reward
             if fingers_closed:
-                finger_reward = 2.0  # Good: closed at the right time
-            elif fingers_open:
-                finger_reward = -3.0  # BAD: still open after reaching ideal height
+                finger_reward = 1.0  # Good: fingers open during descent
             else:
-                finger_reward = 0.5 * (1.0 - finger_openness)  # Reward progress toward closing
+                # STRONG penalty for closing fingers early
+                # This prevents "squeezing" behavior
+                finger_reward = -10.0 * finger_openness  # -10 when fully closed
         else:
             # Haven't reached ideal height yet: MUST keep fingers OPEN
             if fingers_open:
