@@ -30,7 +30,7 @@
             <joint name="gripper_leftright" type="slide" axis="1 0 0" range="-6 6" stiffness="20" damping="5"/>
             <joint name="gripper_forwardbackward" type="slide" axis="0 1 0" range="-6 6" stiffness="20" damping="5"/>
             <!-- vertical motion -->
-            <joint name="gripper_updown" type="slide" axis="0 0 1" range="-0.19 0.0" stiffness="20" damping="5"/>
+            <joint name="gripper_updown" type="slide" axis="0 0 1" range="-1.0 0.0" stiffness="20" damping="5"/>
 
             <geom type="box" size="0.08 0.04 0.01" pos="0 0 0.1" mass="0.1" rgba="1 1 1 1"/>
 

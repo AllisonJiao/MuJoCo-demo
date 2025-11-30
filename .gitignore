@@ -5,7 +5,6 @@
 gripper_mj/checkpoints/
 gripper_mj/checkpoints_lift/
 gripper_mj/videos/
-gripper_mj/videos_grasp/
 gripper_mj/videos_lift/
 gripper_mj/videos_release/
 gripper_mj/test/
@@ -16,4 +15,3 @@ gripper_mj/test/
 *_model.zip
 *_model.pt
 *_vec_normalize.pkl
-
