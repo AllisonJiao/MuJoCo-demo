@@ -15,6 +15,7 @@ class _MetricCatcher:
 
     def write(self, key_values, key_excluded, step):
         # Forward the values so the callback can store them
+        # key_values contains all the metrics that were just dumped
         self._on_dump_fn(key_values)
 
     def close(self):
@@ -36,6 +37,7 @@ class RewardLoggingCallback(BaseCallback):
         self._last_rollout_metrics = {}  # Store metrics from last rollout
         self._episodes_in_rollout = []  # Episodes that finished during the current rollout
         self._metric_catcher = None  # Attached to SB3 logger to intercept dumps
+        self._last_metrics_timestep = {}  # Track when each metric was last updated
 
     def _init_callback(self) -> None:
         """
@@ -48,6 +50,8 @@ class RewardLoggingCallback(BaseCallback):
             self._metric_catcher = _MetricCatcher(self._on_metrics_dumped)
             # SB3 logger calls every output format in order; this is non-destructive
             self.logger.output_formats.append(self._metric_catcher)
+            if self.verbose > 0:
+                print(f"[RewardLogger] Attached metric catcher to logger with {len(self.logger.output_formats)} output formats")
 
     def _get_metrics_from_logger(self):
         """Helper method to extract metrics from logger"""
@@ -117,6 +121,11 @@ class RewardLoggingCallback(BaseCallback):
         Called right after SB3 dumps training metrics. Store the losses so we
         can attach them to any episodes that finished during the just-completed rollout.
         """
+        # Debug: print what metrics are available
+        train_keys = [k for k in key_values.keys() if k.startswith("train/")]
+        if self.verbose > 0 and len(train_keys) > 0:
+            print(f"[RewardLogger] Metrics dumped at t={self.num_timesteps}, train keys: {train_keys[:15]}")
+        
         metrics = {
             "entropy_loss": key_values.get("train/entropy_loss", np.nan),
             "value_loss": key_values.get("train/value_loss", key_values.get("train/critic_loss", np.nan)),
@@ -135,7 +144,15 @@ class RewardLoggingCallback(BaseCallback):
 
         # Update stored metrics if at least one value is present
         if not all(np.isnan(v) for v in metrics.values()):
-            self._last_rollout_metrics.update({k: v for k, v in metrics.items() if not np.isnan(v)})
+            for k, v in metrics.items():
+                if not np.isnan(v):
+                    self._last_rollout_metrics[k] = v
+                    self._last_metrics_timestep[k] = self.num_timesteps
+            if self.verbose > 0:
+                print(f"[RewardLogger] Updated metrics: ent_loss={metrics['entropy_loss']:.4f}, "
+                      f"val_loss={metrics['value_loss']:.4f}, exp_var={metrics['explained_variance']:.4f}")
+        elif self.verbose > 0 and len(train_keys) == 0:
+            print(f"[RewardLogger] Warning: No train/* keys found in dumped metrics at t={self.num_timesteps}")
 
     def _on_step(self) -> bool:
         # infos is a list (one per env) in VecEnv
@@ -165,23 +182,35 @@ class RewardLoggingCallback(BaseCallback):
         ep_reward = float(np.mean(rewards))
         ep_len = float(np.mean(lengths))
 
-        # Get metrics - try from stored metrics first, then from logger directly
-        entropy_loss = self._last_rollout_metrics.get("entropy_loss", np.nan)
-        value_loss = self._last_rollout_metrics.get("value_loss", np.nan)
-        explained_variance = self._last_rollout_metrics.get("explained_variance", np.nan)
+        # Try to get fresh metrics from logger first
+        current_metrics = self._get_metrics_from_logger()
         
-        # If metrics are still NaN, try to get them from logger directly
-        if np.isnan(entropy_loss) or np.isnan(value_loss) or np.isnan(explained_variance):
-            current_metrics = self._get_metrics_from_logger()
-            if not np.isnan(current_metrics["entropy_loss"]):
-                entropy_loss = current_metrics["entropy_loss"]
-                self._last_rollout_metrics["entropy_loss"] = entropy_loss
-            if not np.isnan(current_metrics["value_loss"]):
-                value_loss = current_metrics["value_loss"]
-                self._last_rollout_metrics["value_loss"] = value_loss
-            if not np.isnan(current_metrics["explained_variance"]):
-                explained_variance = current_metrics["explained_variance"]
-                self._last_rollout_metrics["explained_variance"] = explained_variance
+        # Use fresh metrics if available, otherwise fall back to stored metrics
+        # Priority: fresh from logger > stored from _on_metrics_dumped > NaN
+        entropy_loss = np.nan
+        value_loss = np.nan
+        explained_variance = np.nan
+        
+        if not np.isnan(current_metrics["entropy_loss"]):
+            entropy_loss = current_metrics["entropy_loss"]
+            self._last_rollout_metrics["entropy_loss"] = entropy_loss
+            self._last_metrics_timestep["entropy_loss"] = self.num_timesteps
+        elif "entropy_loss" in self._last_rollout_metrics:
+            entropy_loss = self._last_rollout_metrics["entropy_loss"]
+        
+        if not np.isnan(current_metrics["value_loss"]):
+            value_loss = current_metrics["value_loss"]
+            self._last_rollout_metrics["value_loss"] = value_loss
+            self._last_metrics_timestep["value_loss"] = self.num_timesteps
+        elif "value_loss" in self._last_rollout_metrics:
+            value_loss = self._last_rollout_metrics["value_loss"]
+        
+        if not np.isnan(current_metrics["explained_variance"]):
+            explained_variance = current_metrics["explained_variance"]
+            self._last_rollout_metrics["explained_variance"] = explained_variance
+            self._last_metrics_timestep["explained_variance"] = self.num_timesteps
+        elif "explained_variance" in self._last_rollout_metrics:
+            explained_variance = self._last_rollout_metrics["explained_variance"]
 
         row = {
             "timesteps": self.num_timesteps,
@@ -207,8 +236,11 @@ class RewardLoggingCallback(BaseCallback):
         """
         Called after each rollout/update. Write a row immediately with the episodes
         that finished during this rollout and the most recent training metrics.
+        Note: Metrics will be updated when logger.dump() is called (which happens
+        after training updates), so we check the logger directly for fresh metrics.
         """
         # Write the row for this rollout
+        # Metrics will be captured from logger or from _on_metrics_dumped
         self._write_rollout_row()
 
     def _on_training_end(self) -> None:
