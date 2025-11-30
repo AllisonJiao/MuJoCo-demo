@@ -271,7 +271,7 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
             
             # Penalty for too low
             if gripper_height_above_target < MIN_ABOVE_TARGET:
-                height_reward -= 10.0 * (MIN_ABOVE_TARGET - gripper_height_above_target)
+                height_reward -= 100.0 * (MIN_ABOVE_TARGET - gripper_height_above_target)
         
         # 3. FINGER REWARD - simple: open when in position, closed otherwise
         finger_reward = 0.0
