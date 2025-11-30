@@ -445,15 +445,30 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         reward += height_reward
         
         # ============================================================
-        # REWARD 3: Finger behavior (scale: 0 to +1)
-        # Open fingers above ideal height, close at/below ideal height
+        # REWARD 3: Finger behavior (scale: -10 to +2)
+        # CRITICAL: Open fingers during descent, only close at proper position
+        # This prevents "squeezing" behavior where gripper closes early
         # ============================================================
+        # Fingers should be open (openness > 0.8) during descent
+        fingers_open = finger_openness > 0.8
+        fingers_closed = finger_openness < 0.2
+        
         if at_ideal_height and horizontal_dist < 2.0 * SUCCESS_THRESHOLD:
-            # At ideal height: reward CLOSED fingers
-            finger_reward = -2*finger_openness  # 1.0 when closed, 0.0 when open
+            # At ideal height AND centered: reward CLOSING fingers
+            if fingers_closed:
+                finger_reward = 2.0  # Good: closed at the right time
+            elif fingers_open:
+                finger_reward = -1.0  # Still open, should be closing
+            else:
+                finger_reward = 0.0  # Transitioning
         else:
-            # Above ideal height: reward OPEN fingers
-            finger_reward = -5*(1.0 - finger_openness)   # 1.0 when open, 0.0 when closed
+            # NOT at ideal position: MUST keep fingers OPEN
+            if fingers_open:
+                finger_reward = 1.0  # Good: fingers open during descent
+            else:
+                # STRONG penalty for closing fingers early
+                # This is the key fix - prevent "squeezing" behavior
+                finger_reward = -10.0 * (1.0 - finger_openness)  # -10 when fully closed
         reward += finger_reward
         
         # ============================================================
