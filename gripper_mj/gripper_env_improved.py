@@ -12,7 +12,7 @@ from gripper_controller import rand_spawn
 
 BLOCK_DIMENSION = 0.05
 SUCCESS_THRESHOLD = 0.15 * BLOCK_DIMENSION  # Slightly more lenient for deterministic policy
-SUCCESS_RELAXATION_FACTOR = 1.0  # Success threshold relaxation factor
+SUCCESS_RELAXATION_FACTOR = 2.75  # Success threshold relaxation factor
 MAX_STEPS = 500
 # Height constraint (meters) — gripper should hang at least this far above block
 MIN_ABOVE = 0.2  # ~20 cm above block
@@ -22,7 +22,7 @@ STUCK_THRESHOLD = SUCCESS_THRESHOLD * 0.8 #0.005  # Distance change threshold to
 STUCK_PENALTY = 0.05  # Penalty for being stuck
 
 FINGER_WIDTH = 0.02  # Width of each finger (meters)
-FINGER_GAP = BLOCK_DIMENSION + 2 * FINGER_WIDTH  # Total gap between fingers when block is grasped
+FINGER_GAP = 2.0 * BLOCK_DIMENSION + 2 * FINGER_WIDTH  # Total gap between fingers when block is grasped
 
 """
 Improved GripperEnv with better reward shaping for deterministic precision and learnable up/down control.
@@ -194,11 +194,11 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         precision_bonus = 0.0
         if horizontal_dist < 5 * SUCCESS_THRESHOLD:
             # Exponential bonus: e^(-20*d) peaks at d=0
-            precision_bonus = 5.0 * np.exp(-20.0 * horizontal_dist)
+            precision_bonus = 8.0 * np.exp(-30.0 * horizontal_dist)
 
             if horizontal_dist <= 2.0 * SUCCESS_THRESHOLD:
                 # Extra bonus for staying stable
-                precision_bonus += np.exp(-2.0*np.linalg.norm(gripper_vel)) * 2.0  # Reward for low velocity when very close
+                precision_bonus += np.exp(-4.0*np.linalg.norm(gripper_vel)) * 1.75 # Reward for low velocity when very close
 
         # Height penalty/reward
         height_reward = 0.0
@@ -221,7 +221,7 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
                 # Bonus for maintaining good height
                 if dz < TARGET_HEIGHT + 0.02:
                     # Extra bonus for precision when below target height
-                    finger_reward += 1.5
+                    height_reward += 1.5
             
             # Strong penalty for going below block (collision)
             if dz < 0:
@@ -245,7 +245,7 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         # Success rewards
         horizontal_success = horizontal_dist <= SUCCESS_THRESHOLD * SUCCESS_RELAXATION_FACTOR
         height_success = (dz >= MIN_ABOVE) if self.enable_updown_control else True
-        finger_success = finger_distance > FINGER_GAP
+        finger_success = finger_distance >= FINGER_GAP
         velocity_success = np.linalg.norm(gripper_vel) < SUCCESS_THRESHOLD * 0.2
 
         terminated = horizontal_success and height_success and finger_success and velocity_success
