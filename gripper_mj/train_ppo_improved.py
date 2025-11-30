@@ -14,7 +14,7 @@ from gripper_grasp_env_improved import GripperGraspEnv, MAX_STEPS as GRASP_MAX_S
 TRAIN_EPS = 100000
 VALID_EPS = 10
 VALID_MAX_STEPS_POSITION = 500
-VALID_MAX_STEPS_GRASP = 200  # Shorter episodes for grasping task
+VALID_MAX_STEPS_GRASP = 500  # Shorter episodes for grasping task
 
 # Checkpoint configuration
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints")
@@ -229,6 +229,7 @@ for i in range(args.eval_episodes):
     else:
         ep_horiz = []
         ep_dz = []
+        ep_vel = []
 
     for step in range(VALID_MAX_STEPS):
         action, _ = model.predict(obs, deterministic=(not args.stochastic))
@@ -256,6 +257,7 @@ for i in range(args.eval_episodes):
         else:
             ep_horiz.append(info.get("horizontal_dist", np.nan))
             ep_dz.append(info.get("dz", np.nan))
+            ep_vel.append(info.get("velocity", np.nan))
             
             if log_this_ep and step % 10 == 0:
                 print(f"  Step {step}: action={action} horiz_dist={info.get('horizontal_dist', 0.0):.4f} "
@@ -307,6 +309,9 @@ for i in range(args.eval_episodes):
         else:
             print(f"  horiz dist mean: {np.nanmean(ep_horiz):.4f} std: {np.nanstd(ep_horiz):.4f}")
             print(f"  dz mean: {np.nanmean(ep_dz):.4f} std: {np.nanstd(ep_dz):.4f}")
+            print(f"  final vertical_dist: {ep_dz[-1]:.4f} horizontal_dist: {ep_horiz[-1]:.4f}")
+            if len(ep_vel) > 0 and not (isinstance(ep_vel[-1], np.ndarray) and np.isnan(ep_vel[-1]).any()):
+                print(f"  final velocity: {ep_vel[-1]}")
     else:
         print(f"Eval {i}: total_reward: {total_r_inner:.2f}, ep_length: {ep_length}, success: {success}")
 
