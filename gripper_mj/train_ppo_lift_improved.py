@@ -15,11 +15,6 @@ TRAIN_EPS = 100000
 VALID_EPS = 10
 VALID_MAX_STEPS = 500
 
-# Checkpoint configuration
-CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints_lift")
-CHECKPOINT_INTERVAL = 25000
-N_ENVS = 4
-
 # Parse command-line arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("--eval-only", action="store_true", help="Skip training and only run validation")
@@ -32,25 +27,32 @@ parser.add_argument("--train-timesteps", type=int, default=TRAIN_EPS, help="Tota
 parser.add_argument("--ent-coef", type=float, default=0.01, help="Entropy coefficient (higher = more exploration)")
 parser.add_argument("--learning-rate", type=float, default=3e-4, help="Learning rate")
 parser.add_argument("--eval-episodes", type=int, default=VALID_EPS, help="Number of evaluation episodes")
+parser.add_argument("--ablation", action="store_true", help="Run ablation study")
 args = parser.parse_args()
 
 # Render mode configuration
 RENDER_MODE = "human" if args.render_video and args.eval_only else None
+ABLATION_TAG = "_ablation" if args.ablation else ""
+
+# Checkpoint configuration
+CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), f"checkpoints_lift{ABLATION_TAG}")
+CHECKPOINT_INTERVAL = 25000
+N_ENVS = 4
 
 # Create checkpoint directory
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 def make():
     if RENDER_MODE:
-        return GripperLiftEnv(render_mode=RENDER_MODE)
-    return GripperLiftEnv()
+        return GripperLiftEnv(render_mode=RENDER_MODE, ablation=args.ablation)
+    return GripperLiftEnv(ablation=args.ablation)
 
 # Skip env creation and training if eval-only mode
 if not args.eval_only:
     n_envs = 1 if RENDER_MODE == "human" else N_ENVS
     venv = make_vec_env(make, n_envs=n_envs, seed=0)
 
-    print(f"PPO training for lift and hover task")
+    print(f"PPO training for lift and hover task{' with ablation' if args.ablation else ''}")
     print(f"ent_coef={args.ent_coef}, learning_rate={args.learning_rate}, train_timesteps={args.train_timesteps}")
     
     # PPO hyperparameters optimized for lift task
@@ -110,7 +112,7 @@ if not args.eval_only:
     checkpoint_callback = CheckpointCallback(
         save_freq=max(CHECKPOINT_INTERVAL // N_ENVS, 1),
         save_path=CHECKPOINT_DIR,
-        name_prefix="ppo_lift_model",
+        name_prefix=f"ppo_lift_model{ABLATION_TAG}",
         save_replay_buffer=False,
     )
 
@@ -120,7 +122,7 @@ if not args.eval_only:
         verbose=1
     )
 
-    reward_log_path = os.path.join(CHECKPOINT_DIR, "reward_log_lift.csv")
+    reward_log_path = os.path.join(CHECKPOINT_DIR, f"reward_log_lift{ABLATION_TAG}.csv")
     reward_logger = RewardLoggingCallback(log_path=reward_log_path, verbose=1)
 
     # Train with callbacks
@@ -130,11 +132,11 @@ if not args.eval_only:
     )
 
     # Save final model
-    final_model_path = os.path.join(CHECKPOINT_DIR, "ppo_lift_model_final.zip")
+    final_model_path = os.path.join(CHECKPOINT_DIR, f"ppo_lift_model_final{ABLATION_TAG}.zip")
     model.save(final_model_path)
     print(f"Saved final model to {final_model_path}")
 
-    final_pt_path = os.path.join(CHECKPOINT_DIR, "ppo_lift_model_final.pt")
+    final_pt_path = os.path.join(CHECKPOINT_DIR, f"ppo_lift_model_final{ABLATION_TAG}.pt")
     torch.save({
         'policy_state_dict': model.policy.state_dict(),
         'optimizer_state_dict': model.policy.optimizer.state_dict(),
@@ -147,7 +149,7 @@ else:
 # Validation
 validation_render_mode = "rgb_array" if args.render_video else RENDER_MODE
 video_width, video_height = (1280, 720) if args.render_video else (480, 480)
-env = GripperLiftEnv(render_mode=validation_render_mode, width=video_width, height=video_height)
+env = GripperLiftEnv(render_mode=validation_render_mode, width=video_width, height=video_height, ablation=args.ablation)
 obs, info = env.reset(seed=123)
 total_r, successes = 0.0, 0
 
@@ -157,7 +159,7 @@ if args.eval_only:
         print(f"Loading model from {args.model_path}")
         model = PPO.load(args.model_path, env=env)
     else:
-        final_model_path = os.path.join(CHECKPOINT_DIR, "ppo_lift_model_final.zip")
+        final_model_path = os.path.join(CHECKPOINT_DIR, f"ppo_lift_model_final{ABLATION_TAG}.zip")
         if os.path.exists(final_model_path):
             print(f"Loading model from {final_model_path}")
             model = PPO.load(final_model_path, env=env)
@@ -168,7 +170,7 @@ if args.eval_only:
 # Create video directory if rendering videos
 VIDEO_DIR = None
 if args.render_video:
-    VIDEO_DIR = os.path.join(os.path.dirname(__file__), "videos_lift")
+    VIDEO_DIR = os.path.join(os.path.dirname(__file__), f"videos_lift{ABLATION_TAG}")
     os.makedirs(VIDEO_DIR, exist_ok=True)
     print(f"Videos will be saved to {VIDEO_DIR}")
 
@@ -217,7 +219,7 @@ for i in range(args.eval_episodes):
 
     # Save video if frames were collected
     if args.render_video and len(frames) > 0:
-        video_path = os.path.join(VIDEO_DIR, f"validation_lift_ep_{i:03d}.mp4")
+        video_path = os.path.join(VIDEO_DIR, f"validation_lift{ABLATION_TAG}_ep_{i:03d}.mp4")
         h, w = frames[0].shape[:2]
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(video_path, fourcc, 30.0, (w, h))

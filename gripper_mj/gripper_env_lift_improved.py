@@ -63,7 +63,7 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
         "render_fps": 60,
     }
 
-    def __init__(self, render_mode=None, width=480, height=480, **kwargs):
+    def __init__(self, render_mode=None, width=480, height=480, ablation = False, **kwargs):
         utils.EzPickle.__init__(self, render_mode=render_mode, width=width, height=height, **kwargs)
         
         # Observation: [rel_dx, rel_dy, rel_dz, gripper_z, horizontal_dist, vertical_dist, 
@@ -87,6 +87,7 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
 
         self.step_count = 0
         self.max_steps = MAX_STEPS
+        self.ablation = ablation
         
         # actuator ids
         self.updown = self.model.actuator("up/down").id
@@ -241,6 +242,10 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
                     stuck_penalty = 2.0 * STUCK_PENALTY
         self.prev_horizontal_dist = horizontal_dist
         self.prev_dist = dist_block_to_target
+
+        if self.ablation:
+            progress_reward = 0.0
+            stuck_penalty = 0.0
         
         # Precision bonus when very close to target
         precision_bonus = 0.0
@@ -249,7 +254,7 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
             
             if horizontal_dist <= 2.0 * SUCCESS_THRESHOLD:
                 # Extra bonus for staying stable when close
-                precision_bonus += np.exp(-2.0 * np.linalg.norm(gripper_vel)) * 2.0
+                precision_bonus += np.exp(-3.5 * np.linalg.norm(gripper_vel)) * 2.0
 
         # Height reward: maintain appropriate height above target
         height_reward = 0.0

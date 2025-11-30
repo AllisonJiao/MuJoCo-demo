@@ -5,6 +5,7 @@
 gripper_mj/checkpoints/
 gripper_mj/checkpoints_lift/
 gripper_mj/checkpoints_release/
+gripper_mj/checkpoints_grasp/
 gripper_mj/checkpoints_sac_lift/
 gripper_mj/checkpoints_sac_release/
 gripper_mj/checkpoints_sac_position/
@@ -14,6 +15,8 @@ gripper_mj/videos_lift/
 gripper_mj/videos_release/
 gripper_mj/videos_sac/
 gripper_mj/test/
+gripper_mj/videos*/
+gripper_mj/checkpoints*/
 **/checkpoints/
 # Model checkpoint files
 *_model_*.zip
