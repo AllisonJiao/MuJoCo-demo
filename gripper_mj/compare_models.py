@@ -215,7 +215,7 @@ def generate_comparative_histograms(
     # Add success rates as subtitle if provided
     if success_rate1 is not None and success_rate2 is not None:
         success_text = f"{label1} Success Rate: {success_rate1:.1f}%  |  {label2} Success Rate: {success_rate2:.1f}%"
-        fig.text(0.5, 0.96, success_text, ha='center', va='top', fontsize=11, 
+        fig.text(0.5, 0.97, success_text, ha='center', va='top', fontsize=11, 
                  style='italic', color='darkgreen')
     
     # Adjust top margin to make room for title and success rates
