@@ -6,6 +6,9 @@ import argparse
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description='Plot training metrics for PPO and SAC')
+parser.add_argument('--position', action='store_true', help='Plot position stage (grasp) metrics')
+parser.add_argument('--lift', action='store_true', help='Plot lift stage metrics')
+parser.add_argument('--release', action='store_true', help='Plot release stage metrics')
 parser.add_argument('--reward', action='store_true', help='Plot episode reward')
 parser.add_argument('--episode-length', action='store_true', help='Plot episode length')
 parser.add_argument('--entropy-loss', action='store_true', help='Plot entropy loss (separate plots for PPO and SAC)')
@@ -14,16 +17,41 @@ parser.add_argument('--all', action='store_true', help='Plot all metrics (defaul
 parser.add_argument('--window', type=int, default=10, help='Smoothing window size (default: 10)')
 args = parser.parse_args()
 
+# Determine which stage to plot
+stages = [args.position, args.lift, args.release]
+if sum(stages) == 0:
+    # Default to position if no stage is specified
+    args.position = True
+    stage = 'position'
+elif sum(stages) > 1:
+    print("Error: Please specify only one stage (--position, --lift, or --release)")
+    exit(1)
+else:
+    if args.position:
+        stage = 'position'
+    elif args.lift:
+        stage = 'lift'
+    else:
+        stage = 'release'
+
 # If no specific metric is selected, plot all
 if not any([args.reward, args.episode_length, args.entropy_loss, args.value_loss]):
     args.all = True
 
-# 1) Load CSVs (handle missing files gracefully)
+# 1) Load CSVs based on selected stage (handle missing files gracefully)
 ppo = None
 sac = None
 
-ppo_path = "checkpoints/reward_log_position.csv"
-sac_path = "checkpoints_sac_position/reward_log_position.csv"
+# Define CSV paths based on stage
+if stage == 'position':
+    ppo_path = "checkpoints/reward_log_position.csv"
+    sac_path = "checkpoints_sac_position/reward_log_position.csv"
+elif stage == 'lift':
+    ppo_path = "checkpoints_lift/reward_log_lift.csv"
+    sac_path = "checkpoints_sac_lift/reward_log_lift.csv"
+else:  # release
+    ppo_path = "checkpoints_release/reward_log_release.csv"
+    sac_path = "checkpoints_sac_release/reward_log_release.csv"
 
 if os.path.exists(ppo_path):
     ppo = pd.read_csv(ppo_path)
@@ -113,7 +141,8 @@ else:
     cols = 2
 
 fig, axes = plt.subplots(rows, cols, figsize=(14, 5*rows))
-fig.suptitle("PPO vs SAC – Training Metrics Comparison", fontsize=16, fontweight='bold')
+stage_title = stage.capitalize()
+fig.suptitle(f"PPO vs SAC – {stage_title} Stage Training Metrics Comparison", fontsize=16, fontweight='bold')
 
 # Flatten axes if needed
 if num_subplots == 1:
