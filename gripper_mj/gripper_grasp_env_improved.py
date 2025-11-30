@@ -31,9 +31,9 @@ BLOCK_OFFSET_RANGE = SUCCESS_THRESHOLD * 2.0  # Horizontal offset range for bloc
 # Default gripper height (from XML model - gripper starts at z=0.3)
 DEFAULT_GRIPPER_HEIGHT = 0.3  # Gripper default height above ground
 
-MIN_HEIGHT = 0.09    # Minimum safe height
-MAX_HEIGHT = 0.11    # Minimum safe height
-IDEAL_HEIGHT = 0.1  # Ideal gripper height for grasping
+MIN_HEIGHT = 0.08    # Minimum safe height (below this, fingers hit ground)
+MAX_HEIGHT = 0.14    # Maximum height in ideal range
+IDEAL_HEIGHT = 0.11  # Center of ideal gripper height for grasping
 
 """
 Improved GripperGraspEnv with velocity-based observations and better reward shaping.
@@ -413,53 +413,63 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         self.prev_horizontal_dist = horizontal_dist
         
         # ============================================================
-        # REWARD 1: Horizontal precision (scale: -1 to 0)
-        # Penalize being off-center from block
+        # REWARD 1: Horizontal precision (scale: 0 to +1)
+        # Reward being centered over block
         # ============================================================
-        horizontal_penalty = np.exp(-5.0*horizontal_dist) * 1.0  # Scale: ~0.02m offset = -0.2
-        #horizontal_penalty = np.clip(horizontal_penalty, -1.0, 0.0)
-        reward += horizontal_penalty
+        horizontal_reward = np.exp(-10.0 * horizontal_dist)  # 1.0 when centered, ~0.37 at 0.1m offset
+        reward += horizontal_reward
 
-        velocity_penalty = -1.0 * (np.exp(np.linalg.norm(gripper_vel[:2]) * 5.0) - 1.0)
+        # Small velocity penalty to discourage swinging
+        velocity_penalty = -0.5 * np.linalg.norm(gripper_vel[:2])
         reward += velocity_penalty
         
         # ============================================================
-        # REWARD 2: Height reward (scale: -1 to +1)
-        # Reward being at ideal height, penalize being too high/low
+        # REWARD 2: Height reward (scale: -2 to +2)
+        # Uses a "sweet spot" design centered at IDEAL_HEIGHT
+        # Maximum reward at ideal height, decreasing linearly as you move away
         # ============================================================
-        
-        if gripper_height > MAX_HEIGHT or gripper_height < MIN_HEIGHT:
-            height_reward = -5.0 * abs(vertical_dist)
+        if gripper_height >= MIN_HEIGHT and gripper_height <= MAX_HEIGHT:
+            # In the ideal range: reward = +2.0
+            height_reward = 2.0
+        elif gripper_height > MAX_HEIGHT:
+            # Above ideal: penalty proportional to how far above
+            # Starts at +1.0 at MAX_HEIGHT, decreases to -1.0 far above
+            height_reward = 1.0 - (gripper_height - MAX_HEIGHT) * 10.0
+            height_reward = max(height_reward, -1.0)  # Cap at -1
         else:
-            height_reward = 2.0 * np.exp(5.0 * abs(vertical_dist))
+            # Below minimum: STRONG penalty to discourage going too low
+            # Starts at 0.0 at MIN_HEIGHT, goes to -2.0 quickly
+            height_reward = -(MIN_HEIGHT - gripper_height) * 100.0
+            height_reward = max(height_reward, -2.0)  # Cap at -2
+        
         reward += height_reward
         
         # ============================================================
-        # REWARD 3: Finger behavior (scale: -1 to +1)
+        # REWARD 3: Finger behavior (scale: 0 to +1)
         # Open fingers above ideal height, close at/below ideal height
         # ============================================================
         if at_ideal_height:
             # At ideal height: reward CLOSED fingers
-            finger_reward = 5.0*(1.0 - finger_openness)  # 1.0 when closed, 0.0 when open
+            finger_reward = 1.0 - finger_openness  # 1.0 when closed, 0.0 when open
         else:
             # Above ideal height: reward OPEN fingers
-            finger_reward = 5.0 * finger_openness  # 1.0 when open, 0.0 when closed
+            finger_reward = finger_openness  # 1.0 when open, 0.0 when closed
         reward += finger_reward
         
         # ============================================================
-        # REWARD 4: Success bonus (+5)
+        # REWARD 4: Success bonus (+10)
         # ============================================================
         if grasped:
             reward += 10.0
-
-        if gripper_height < 0.07:
-            reward -= 50.0  # Heavy penalty for crashing to ground
         
         # Small step penalty
         reward -= 0.01
+        
         # Termination
+        # Truncate if gripper goes too low (fingers would hit ground)
+        CRASH_HEIGHT = 0.06  # Below this, fingers definitely hit ground
         terminated = grasped
-        truncated = self.step_count >= self.max_steps or gripper_height < 0.07
+        truncated = self.step_count >= self.max_steps or gripper_height < CRASH_HEIGHT
         
         info = {
             "grasped": grasped,
@@ -474,7 +484,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             "right_finger_contact": right_finger_block_contact,
             "both_fingers_contact": both_fingers_contact,
             "gripper_height": gripper_height,
-            "horizontal_penalty": horizontal_penalty,
+            "horizontal_reward": horizontal_reward,
             "height_reward": height_reward,
             "finger_reward": finger_reward,
             "gripper_velocity": gripper_vel
