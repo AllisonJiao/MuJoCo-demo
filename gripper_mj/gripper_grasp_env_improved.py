@@ -442,7 +442,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             # Above ideal: penalty proportional to how far above
             # Starts at +1.0 at MAX_HEIGHT, decreases to -1.0 far above
             height_reward = 1.0 - (gripper_height - MAX_HEIGHT) * 10.0
-            height_reward = max(height_reward, -1.0)  # Cap at -1
+            height_reward = max(height_reward, -2.0)  # Cap at -1
         else:
             # Below minimum: STRONG penalty to discourage going too low
             # Starts at 0.0 at MIN_HEIGHT, goes to -2.0 quickly
@@ -461,7 +461,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         # ============================================================
         # Fingers should be open (openness > 0.8) during descent
         fingers_open = finger_openness > 0.8
-        fingers_closed = finger_openness < 0.2
+        fingers_closed = finger_openness < 0.15
         
         # Track if gripper has reached ideal height (latching flag)
         # Once at ideal height, must close fingers - cannot shift away
@@ -483,7 +483,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         else:
             # Haven't reached ideal height yet: MUST keep fingers OPEN
             if fingers_open:
-                finger_reward = 1.0  # Good: fingers open during descent
+                finger_reward = 0.1  # Good: fingers open during descent
             else:
                 # STRONG penalty for closing fingers early
                 # This prevents "squeezing" behavior
