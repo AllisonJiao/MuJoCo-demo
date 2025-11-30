@@ -4,7 +4,9 @@
 # Checkpoints and model files
 gripper_mj/checkpoints/
 gripper_mj/checkpoints_lift/
+gripper_mj/checkpoints_release/
 gripper_mj/checkpoints_sac_lift/
+gripper_mj/checkpoints_sac_release/
 gripper_mj/checkpoints_sac_position/
 gripper_mj/videos/
 gripper_mj/videos_lift/
