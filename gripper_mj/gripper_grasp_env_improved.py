@@ -32,8 +32,8 @@ BLOCK_OFFSET_RANGE = SUCCESS_THRESHOLD * 2.0  # Horizontal offset range for bloc
 DEFAULT_GRIPPER_HEIGHT = 0.3  # Gripper default height above ground
 
 MIN_HEIGHT = 0.08    # Minimum safe height (below this, fingers hit ground)
-MAX_HEIGHT = 0.14    # Maximum height in ideal range
-IDEAL_HEIGHT = 0.11  # Center of ideal gripper height for grasping
+MAX_HEIGHT = 0.10    # Maximum height in ideal range
+IDEAL_HEIGHT = 0.09  # Center of ideal gripper height for grasping
 
 """
 Improved GripperGraspEnv with velocity-based observations and better reward shaping.
@@ -416,11 +416,11 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         # REWARD 1: Horizontal precision (scale: 0 to +1)
         # Reward being centered over block
         # ============================================================
-        horizontal_reward = np.exp(-10.0 * horizontal_dist)  # 1.0 when centered, ~0.37 at 0.1m offset
+        horizontal_reward = 2.0 *np.exp(-50.0 * horizontal_dist)  # 1.0 when centered, ~0.37 at 0.1m offset
         reward += horizontal_reward
 
         # Small velocity penalty to discourage swinging
-        velocity_penalty = -0.5 * np.linalg.norm(gripper_vel[:2])
+        velocity_penalty = -1 * (np.exp(4.0*np.linalg.norm(gripper_vel[:2]))-1.0)
         reward += velocity_penalty
         
         # ============================================================
@@ -448,12 +448,12 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         # REWARD 3: Finger behavior (scale: 0 to +1)
         # Open fingers above ideal height, close at/below ideal height
         # ============================================================
-        if at_ideal_height:
+        if at_ideal_height and horizontal_dist < 2.0 * SUCCESS_THRESHOLD:
             # At ideal height: reward CLOSED fingers
-            finger_reward = 1.0 - finger_openness  # 1.0 when closed, 0.0 when open
+            finger_reward = -2*finger_openness  # 1.0 when closed, 0.0 when open
         else:
             # Above ideal height: reward OPEN fingers
-            finger_reward = finger_openness  # 1.0 when open, 0.0 when closed
+            finger_reward = -5*(1.0 - finger_openness)   # 1.0 when open, 0.0 when closed
         reward += finger_reward
         
         # ============================================================
