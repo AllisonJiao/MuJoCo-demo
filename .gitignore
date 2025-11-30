@@ -24,3 +24,6 @@ gripper_mj/test/
 
 # Log files
 reward_log_*.csv
+
+# Comparison output files
+comparison_*.png

@@ -8,3 +8,4 @@ numpy
 gymnasium
 opencv-python
 torch
+matplotlib
