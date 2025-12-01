@@ -58,7 +58,7 @@ def plot_metric(ax, data, metric_name, ylabel, title, label, window=window):
         return
     
     # Apply smoothing
-    valid_data[f"{metric_name}_smooth"] = valid_data[metric_name].rolling(window, min_periods=1).mean()
+    valid_data[f"{metric_name}_smooth"] = valid_data[metric_name]
     
     # Plot smoothed line
     ax.plot(valid_data["timesteps"], valid_data[f"{metric_name}_smooth"], 
