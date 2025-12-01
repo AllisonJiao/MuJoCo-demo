@@ -1,6 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
+import sys
 import numpy as np
 import argparse
 
@@ -32,14 +33,14 @@ if os.path.exists(args.ppo1):
     print(f"Loaded {args.label1} data: {len(ppo1)} rollouts from {args.ppo1}")
 else:
     print(f"Error: {args.ppo1} not found")
-    exit(1)
+    sys.exit(1)
 
 if os.path.exists(args.ppo2):
     ppo2 = pd.read_csv(args.ppo2)
     print(f"Loaded {args.label2} data: {len(ppo2)} rollouts from {args.ppo2}")
 else:
     print(f"Error: {args.ppo2} not found")
-    exit(1)
+    sys.exit(1)
 
 # 2) Smoothing window for plots
 window = args.window
@@ -87,7 +88,7 @@ if args.all or args.value_loss:
 num_plots = len(plots_to_create)
 if num_plots == 0:
     print("No plots to create!")
-    exit(1)
+    sys.exit(1)
 
 # For PPO vs PPO comparison, all plots are combined (no separate plots needed)
 num_subplots = num_plots
