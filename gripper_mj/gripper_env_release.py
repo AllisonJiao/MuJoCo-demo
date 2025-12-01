@@ -340,8 +340,16 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
 
         return obs, reward, terminated, truncated, info
 
-    def reset_model(self):
+    def reset_model(self, initial_state=None):
         """Reset the environment with FIXED gripper position, target below with horizontal offset.
+        
+        Args:
+            initial_state: Optional dict containing:
+                - 'qpos': Joint positions to copy
+                - 'qvel': Joint velocities to copy
+                - 'ctrl': Control values to copy
+                - 'target_pos': Target position to copy
+                If provided, copies state instead of random initialization.
         
         NEW APPROACH:
         - Gripper stays at default position (no joint changes that cause velocity drift)
@@ -357,74 +365,82 @@ class GripperReleaseEnv(MuJocoPyEnv, utils.EzPickle):
         self.prev_horizontal_dist = None
         self.release_reward_given = False
 
-        # Reset simulation to initial state (this gives us default gripper position)
-        mujoco.mj_resetData(self.model, self.data)
-        
-        # Get joint addresses
-        block_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "block_free")
-        block_adr = self.model.jnt_qposadr[block_joint]
+        if initial_state is not None:
+            # Copy state from provided initial_state
+            self.data.qpos[:] = initial_state['qpos']
+            self.data.qvel[:] = initial_state['qvel']
+            self.data.ctrl[:] = initial_state['ctrl']
+            if 'target_pos' in initial_state:
+                target_id = self.model.geom("target").id
+                self.model.geom_pos[target_id] = initial_state['target_pos']
+            mujoco.mj_forward(self.model, self.data)
+            
+            # Check if grasp was successful after state transfer
+            self.initial_grasp_success = self._check_grasped()
+        else:
+            # Reset simulation to initial state (this gives us default gripper position)
+            mujoco.mj_resetData(self.model, self.data)
+            
+            # Get joint addresses
+            block_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "block_free")
+            block_adr = self.model.jnt_qposadr[block_joint]
 
-        left_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "left_slide")
-        right_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "right_slide")
-        left_adr = self.model.jnt_qposadr[left_finger_joint]
-        right_adr = self.model.jnt_qposadr[right_finger_joint]
+            left_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "left_slide")
+            right_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "right_slide")
+            left_adr = self.model.jnt_qposadr[left_finger_joint]
+            right_adr = self.model.jnt_qposadr[right_finger_joint]
 
-        # Forward pass to get gripper position from default qpos
-        mujoco.mj_forward(self.model, self.data)
-        
-        # Get default gripper position
-        gripper_pos = self.data.xpos[self.gripper][:3].copy()
-        
-        # Place target below gripper with random horizontal offset
-        target_offset_x = np.random.uniform(-TARGET_OFFSET_RANGE, TARGET_OFFSET_RANGE)
-        target_offset_y = np.random.uniform(-TARGET_OFFSET_RANGE, TARGET_OFFSET_RANGE)
-        
-        target_id = self.model.geom("target").id
-        self.model.geom_pos[target_id] = np.array([
-            gripper_pos[0] + target_offset_x,
-            gripper_pos[1] + target_offset_y,
-            0.001  # Target on ground
-        ])
-        
-        # Set fingers to closed position
-        self.data.qpos[left_adr] = FINGER_CLOSE_POSITION
-        self.data.qpos[right_adr] = FINGER_CLOSE_POSITION
+            # Forward pass to get gripper position from default qpos
+            mujoco.mj_forward(self.model, self.data)
+            
+            # Get default gripper position
+            gripper_pos = self.data.xpos[self.gripper][:3].copy()
+            
+            # Place target below gripper with random horizontal offset
+            target_offset_x = np.random.uniform(-TARGET_OFFSET_RANGE, TARGET_OFFSET_RANGE)
+            target_offset_y = np.random.uniform(-TARGET_OFFSET_RANGE, TARGET_OFFSET_RANGE)
+            
+            target_id = self.model.geom("target").id
+            self.model.geom_pos[target_id] = np.array([
+                gripper_pos[0] + target_offset_x,
+                gripper_pos[1] + target_offset_y,
+                0.001  # Target on ground
+            ])
+            
+            # Set fingers to closed position
+            self.data.qpos[left_adr] = FINGER_CLOSE_POSITION
+            self.data.qpos[right_adr] = FINGER_CLOSE_POSITION
 
-        # Position block at gripper location (will be held by closed fingers)
-        self.data.qpos[block_adr:block_adr+3] = [
-            gripper_pos[0],
-            gripper_pos[1],
-            gripper_pos[2]  # Same height as gripper
-        ]
-        self.data.qpos[block_adr+3:block_adr+7] = [1, 0, 0, 0]  # Identity quaternion
+            # Position block at gripper location (will be held by closed fingers)
+            self.data.qpos[block_adr:block_adr+3] = [
+                gripper_pos[0],
+                gripper_pos[1],
+                gripper_pos[2]  # Same height as gripper
+            ]
+            self.data.qpos[block_adr+3:block_adr+7] = [1, 0, 0, 0]  # Identity quaternion
 
-        # Set finger actuator to maintain closed position
-        self.data.ctrl[self.finger] = FINGER_CLOSE_COMMAND
-        self.data.ctrl[self.updown] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 2.0
-        self.data.ctrl[self.leftright] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 2.0
-        self.data.ctrl[self.forwardback] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 2.0
-
-        # Propagate physics to get proper contact
-        mujoco.mj_forward(self.model, self.data)
-
-        # Let physics settle for grasp
-        for _ in range(20):
+            # Set finger actuator to maintain closed position
             self.data.ctrl[self.finger] = FINGER_CLOSE_COMMAND
-            #self.data.ctrl[self.updown] = 0.0
-            #self.data.ctrl[self.leftright] = 0.0
-            #self.data.ctrl[self.forwardback] = 0.0
-            mujoco.mj_step(self.model, self.data)
-        
-        # Set finger actuator to maintain closed position
-        self.data.ctrl[self.finger] = FINGER_CLOSE_COMMAND
-        '''
-        self.data.ctrl[self.updown] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 0.0
-        self.data.ctrl[self.leftright] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 0.0
-        self.data.ctrl[self.forwardback] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 0.0
-        '''
+            self.data.ctrl[self.updown] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 2.0
+            self.data.ctrl[self.leftright] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 2.0
+            self.data.ctrl[self.forwardback] = np.random.uniform(-SUCCESS_THRESHOLD, SUCCESS_THRESHOLD) * 2.0
 
-        # Check if grasp was successful
-        self.initial_grasp_success = self._check_grasped()
+            # Propagate physics to get proper contact
+            mujoco.mj_forward(self.model, self.data)
+
+            # Let physics settle for grasp
+            for _ in range(20):
+                self.data.ctrl[self.finger] = FINGER_CLOSE_COMMAND
+                #self.data.ctrl[self.updown] = 0.0
+                #self.data.ctrl[self.leftright] = 0.0
+                #self.data.ctrl[self.forwardback] = 0.0
+                mujoco.mj_step(self.model, self.data)
+            
+            # Set finger actuator to maintain closed position
+            self.data.ctrl[self.finger] = FINGER_CLOSE_COMMAND
+
+            # Check if grasp was successful
+            self.initial_grasp_success = self._check_grasped()
 
         # Get updated positions
         block_pos = self.data.xpos[self.body][:3]

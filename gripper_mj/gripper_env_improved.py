@@ -271,15 +271,34 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
 
         return obs, reward, terminated, truncated, info
 
-    def reset_model(self):
-        """Reset the robot degrees of freedom (qpos and qvel) and randomize block/target positions."""
+    def reset_model(self, initial_state=None):
+        """Reset the robot degrees of freedom (qpos and qvel) and randomize block/target positions.
+        
+        Args:
+            initial_state: Optional dict containing:
+                - 'qpos': Joint positions to copy
+                - 'qvel': Joint velocities to copy
+                - 'ctrl': Control values to copy
+                - 'target_pos': Target position to copy
+                If provided, copies state instead of random initialization.
+        """
         self.step_count = 0
         self.prev_action = None
         self.action_history = []
         
-        # Note: _reset_simulation() is already called by base class reset()
-        rand_spawn(self.model, self.data)  # randomize block/target
-        mujoco.mj_forward(self.model, self.data)  # propagate physics
+        if initial_state is not None:
+            # Copy state from provided initial_state
+            self.data.qpos[:] = initial_state['qpos']
+            self.data.qvel[:] = initial_state['qvel']
+            self.data.ctrl[:] = initial_state['ctrl']
+            if 'target_pos' in initial_state:
+                target_id = self.model.geom("target").id
+                self.model.geom_pos[target_id] = initial_state['target_pos']
+            mujoco.mj_forward(self.model, self.data)
+        else:
+            # Note: _reset_simulation() is already called by base class reset()
+            rand_spawn(self.model, self.data)  # randomize block/target
+            mujoco.mj_forward(self.model, self.data)  # propagate physics
 
         block_pos = self.data.xpos[self.body][:3]
         gripper_pos = self.data.xpos[self.gripper][:3]
