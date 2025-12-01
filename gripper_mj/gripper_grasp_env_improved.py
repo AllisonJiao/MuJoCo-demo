@@ -537,6 +537,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
                 - 'qpos': Joint positions to copy
                 - 'qvel': Joint velocities to copy
                 - 'ctrl': Control values to copy
+                - 'act': Actuator states to copy (critical for intvelocity actuators)
                 - 'target_pos': Target position to copy
                 If provided, copies state instead of random initialization.
         
@@ -564,6 +565,9 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
             self.data.qpos[:] = initial_state['qpos']
             self.data.qvel[:] = initial_state['qvel']
             self.data.ctrl[:] = initial_state['ctrl']
+            # Copy actuator states - critical for intvelocity actuators to prevent sudden movement
+            if 'act' in initial_state:
+                self.data.act[:] = initial_state['act']
             if 'target_pos' in initial_state:
                 target_id = self.model.geom("target").id
                 self.model.geom_pos[target_id] = initial_state['target_pos']
