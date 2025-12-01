@@ -167,11 +167,15 @@ class BaseMujocoPyEnv(gym.Env[NDArray[np.float64], NDArray[np.float32]]):
     ):
         super().reset(seed=seed)
 
-        # Check if initial_state is provided in options for state transfer
+        # Check if initial_state is provided in options for state transfer.
+        # When transferring state from another environment (for chained execution),
+        # we skip _reset_simulation() because it would clear the qpos/qvel arrays
+        # that we're about to populate from the initial_state dict.
         initial_state = None
         if options is not None and 'initial_state' in options:
             initial_state = options['initial_state']
-            # Skip _reset_simulation when transferring state
+            # Skip _reset_simulation when transferring state - the state will be
+            # set directly from initial_state in reset_model()
         else:
             self._reset_simulation()
 

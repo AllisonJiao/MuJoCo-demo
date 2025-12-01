@@ -43,12 +43,16 @@ def get_env_state(env):
     """Extract the current state from an environment.
     
     Returns a dict suitable for passing to env.reset(options={'initial_state': ...})
+    
+    Note: This assumes all environments have a 'target' geom. All gripper environments
+    in this project satisfy this requirement.
     """
+    target_id = env.model.geom("target").id
     return {
         'qpos': env.data.qpos.copy(),
         'qvel': env.data.qvel.copy(),
         'ctrl': env.data.ctrl.copy(),
-        'target_pos': env.model.geom_pos[env.model.geom("target").id].copy()
+        'target_pos': env.model.geom_pos[target_id].copy()
     }
 
 
@@ -131,7 +135,10 @@ def run_chained_rollout(
     if not hover_success:
         if debug:
             print("  Hover stage failed, attempting to continue anyway...")
-        # Continue anyway since sometimes partial success is OK
+        # Continue even if hover doesn't meet strict success criteria, because:
+        # 1. The gripper may be close enough to the block for grasp to succeed
+        # 2. The grasp model is trained to handle some positioning errors
+        # 3. Early termination would prevent any chance of completing the task
     
     # Stage 2: Grasp - descend and grasp the block
     if debug:
@@ -174,7 +181,10 @@ def run_chained_rollout(
     if not lift_success:
         if debug:
             print("  Lift stage failed, attempting release anyway...")
-        # Continue anyway since sometimes partial success is OK
+        # Continue even if lift doesn't meet strict success criteria, because:
+        # 1. The block may be close enough to the target for release to succeed
+        # 2. The release model can still attempt to position and release
+        # 3. Measuring partial completion is useful for debugging
     
     # Stage 4: Release - release block onto target
     if debug:
@@ -266,9 +276,13 @@ def main():
             print(f"Error: {name} model not found at {path}")
             sys.exit(1)
     
-    # Setup render mode
+    # Setup render mode and dimensions
     render_mode = "rgb_array" if args.render_video else None
-    video_width, video_height = (1280, 720) if args.render_video else (480, 480)
+    # Use higher resolution for video output, default for non-video mode
+    if args.render_video:
+        video_width, video_height = 1280, 720
+    else:
+        video_width, video_height = 480, 480
     
     # Create environments
     print("Creating environments...")
