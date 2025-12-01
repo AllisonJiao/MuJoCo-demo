@@ -296,7 +296,7 @@ def main():
         render_mode=render_mode,
         width=video_width,
         height=video_height,
-        allow_xy_adjust=True
+        allow_xy_adjust=False
     )
     lift_env = GripperLiftEnv(
         render_mode=render_mode,
