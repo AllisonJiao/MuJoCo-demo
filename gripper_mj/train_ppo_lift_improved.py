@@ -132,11 +132,11 @@ if not args.eval_only:
     )
 
     # Save final model
-    final_model_path = os.path.join(CHECKPOINT_DIR, f"ppo_lift_model_final{ABLATION_TAG}.zip")
+    final_model_path = os.path.join(CHECKPOINT_DIR, f"ppo_lift_model{ABLATION_TAG}_final.zip")
     model.save(final_model_path)
     print(f"Saved final model to {final_model_path}")
 
-    final_pt_path = os.path.join(CHECKPOINT_DIR, f"ppo_lift_model_final{ABLATION_TAG}.pt")
+    final_pt_path = os.path.join(CHECKPOINT_DIR, f"ppo_lift_model{ABLATION_TAG}_final.pt")
     torch.save({
         'policy_state_dict': model.policy.state_dict(),
         'optimizer_state_dict': model.policy.optimizer.state_dict(),

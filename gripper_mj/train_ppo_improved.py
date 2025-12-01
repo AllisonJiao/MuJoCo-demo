@@ -17,11 +17,6 @@ VALID_EPS = 10
 VALID_MAX_STEPS_POSITION = 500
 VALID_MAX_STEPS_GRASP = 500  # Shorter episodes for grasping task
 
-# Checkpoint configuration
-CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints")
-CHECKPOINT_INTERVAL = 25000
-N_ENVS = 4
-
 # Parse command-line arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("--eval-only", action="store_true", help="Skip training and only run validation")
@@ -38,10 +33,17 @@ parser.add_argument("--learning-rate", type=float, default=3e-4, help="Learning 
 parser.add_argument("--env-type", type=str, default="position", choices=["position", "grasp"], 
                     help="Environment type: 'position' for positioning or 'grasp' for grasping")
 parser.add_argument("--eval-episodes", type=int, default=VALID_EPS, help="Number of evaluation episodes")
+parser.add_argument("--ablation", action="store_true", help="Run ablation study")
 args = parser.parse_args()
 
 # Render mode configuration
 RENDER_MODE = "human" if args.render_video and args.eval_only else None
+ABLATION_TAG = "_ablation" if args.ablation else ""
+
+# Checkpoint configuration
+CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), f"checkpoints{ABLATION_TAG}")
+CHECKPOINT_INTERVAL = 25000
+N_ENVS = 4
 
 # Adjust checkpoint directory and max steps based on environment type
 if args.env_type == "grasp":
@@ -63,8 +65,8 @@ def make():
     else:
         # Env A: Positioning environment (default)
         if RENDER_MODE:
-            return GripperEnv(render_mode=RENDER_MODE, enable_updown_control=args.enable_updown)
-        return GripperEnv(enable_updown_control=args.enable_updown)
+            return GripperEnv(render_mode=RENDER_MODE, enable_updown_control=args.enable_updown, ablation=args.ablation)
+        return GripperEnv(enable_updown_control=args.enable_updown, ablation=args.ablation)
 
 # Skip env creation and training if eval-only mode
 if not args.eval_only:
@@ -132,7 +134,7 @@ class PyTorchCheckpointCallback(BaseCallback):
         return True
 
 if not args.eval_only:
-    model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else "ppo_model"
+    model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else f"ppo_model{ABLATION_TAG}"
     checkpoint_callback = CheckpointCallback(
         save_freq=max(CHECKPOINT_INTERVAL // N_ENVS, 1),
         save_path=CHECKPOINT_DIR,
@@ -148,7 +150,7 @@ if not args.eval_only:
 
     reward_log_path = os.path.join(
         CHECKPOINT_DIR,
-        "reward_log_grasp.csv" if args.env_type == "grasp" else "reward_log_position.csv"
+        "reward_log_grasp.csv" if args.env_type == "grasp" else f"reward_log_position{ABLATION_TAG}.csv"
     )
 
     reward_logger = RewardLoggingCallback(log_path=reward_log_path, verbose=1)
@@ -160,7 +162,7 @@ if not args.eval_only:
     )
 
     # Save final model
-    model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else "ppo_model"
+    model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else f"ppo_model{ABLATION_TAG}"
     final_model_path = os.path.join(CHECKPOINT_DIR, f"{model_prefix}_final.zip")
     model.save(final_model_path)
     print(f"Saved final model to {final_model_path}")
@@ -212,7 +214,7 @@ if args.eval_only:
 # Create video directory if rendering videos
 VIDEO_DIR = None
 if args.render_video:
-    video_dir_name = "videos_grasp" if args.env_type == "grasp" else "videos"
+    video_dir_name = "videos_grasp" if args.env_type == "grasp" else f"videos{ABLATION_TAG}"
     VIDEO_DIR = os.path.join(os.path.dirname(__file__), video_dir_name)
     os.makedirs(VIDEO_DIR, exist_ok=True)
     print(f"Videos will be saved to {VIDEO_DIR}")
@@ -287,7 +289,7 @@ for i in range(args.eval_episodes):
 
     # Save video if frames were collected
     if args.render_video and len(frames) > 0:
-        video_prefix = "validation_grasp_ep" if args.env_type == "grasp" else "validation_ep"
+        video_prefix = "validation_grasp_ep" if args.env_type == "grasp" else f"validation_ep{ABLATION_TAG}_ep"
         video_path = os.path.join(VIDEO_DIR, f"{video_prefix}_{i:03d}.mp4")
         h, w = frames[0].shape[:2]
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
