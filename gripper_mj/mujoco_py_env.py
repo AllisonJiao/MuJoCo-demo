@@ -126,6 +126,7 @@ class BaseMujocoPyEnv(gym.Env[NDArray[np.float64], NDArray[np.float32]]):
                 - 'qpos': Joint positions to copy
                 - 'qvel': Joint velocities to copy
                 - 'ctrl': Control values to copy
+                - 'act': Actuator states to copy (critical for intvelocity actuators)
                 - 'target_pos': Target position to copy (optional)
         """
         raise NotImplementedError

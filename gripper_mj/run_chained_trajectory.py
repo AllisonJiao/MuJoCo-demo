@@ -46,12 +46,16 @@ def get_env_state(env):
     
     Note: This assumes all environments have a 'target' geom. All gripper environments
     in this project satisfy this requirement.
+    
+    Important: We include 'act' (actuator states) which is critical for intvelocity
+    actuators to prevent sudden movement after state transfer.
     """
     target_id = env.model.geom("target").id
     return {
         'qpos': env.data.qpos.copy(),
         'qvel': env.data.qvel.copy(),
         'ctrl': env.data.ctrl.copy(),
+        'act': env.data.act.copy(),  # Actuator states - critical for intvelocity actuators
         'target_pos': env.model.geom_pos[target_id].copy()
     }
 
