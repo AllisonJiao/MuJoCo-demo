@@ -34,6 +34,7 @@ def make():
         if RENDER_MODE:
             return GripperGraspEnv(allow_xy_adjust=allow_xy, render_mode=RENDER_MODE)
         return GripperGraspEnv(allow_xy_adjust=allow_xy)
+
     else:
         # Env A: Positioning environment (default)
         if RENDER_MODE:

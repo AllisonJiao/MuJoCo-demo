@@ -1,6 +1,8 @@
 # MuJoCo Gripper Training
 
-This project implements a multi-stage curriculum learning approach for training a gripper to manipulate a block using MuJoCo and Stable-Baselines3.
+This project implements a multi-stage curriculum learning approach for training a gripper to manipulate a block using MuJoCo and Stable-Baselines3. All training is done through unified scripts that support all four stages:
+- `train_ppo_improved.py` - Proximal Policy Optimization (PPO) training
+- `train_sac_improved.py` - Soft Actor-Critic (SAC) training
 
 ## Setup
 
@@ -26,6 +28,10 @@ docker compose up -d
 
 ## Training
 
+All training is done through unified scripts. Use the `--env-type` argument to select which stage to train:
+- **PPO**: `train_ppo_improved.py` - On-policy algorithm, good for stable learning
+- **SAC**: `train_sac_improved.py` - Off-policy algorithm, sample-efficient
+
 ### Stage 1: Position Training (Env A)
 
 Train the gripper to position itself horizontally over the block.
@@ -33,170 +39,265 @@ Train the gripper to position itself horizontally over the block.
 **Basic training:**
 ```bash
 cd gripper_mj
-python train_ppo.py
+python train_ppo_improved.py --env-type position
 ```
 
-**With rendering (visualize training):**
+**With learnable up/down control:**
 ```bash
 cd gripper_mj
-RENDER_MODE=human python train_ppo.py
+python train_ppo_improved.py --env-type position --enable-updown
+```
+
+**Training with custom parameters:**
+```bash
+cd gripper_mj
+python train_ppo_improved.py --env-type position --train-timesteps 200000 --learning-rate 3e-4 --ent-coef 0.01
 ```
 
 **Training parameters:**
 - Default training timesteps: 100,000
 - Checkpoints saved every 25,000 timesteps
-- Model saved to: `gripper_mj/checkpoints/ppo_model_final.zip`
+- Model saved to: `gripper_mj/checkpoints/ppo_position_model_final.zip`
+- Reward logs: `gripper_mj/checkpoints/reward_log_position.csv`
 
 ### Stage 2: Grasp Training (Env B)
 
 Train the gripper to descend and grasp the block. The gripper starts already positioned above the block.
 
-**Option 1: Train from scratch**
+**Basic training (no XY adjustments):**
 ```bash
 cd gripper_mj
-ENV_TYPE=grasp python train_ppo.py
+python train_ppo_improved.py --env-type grasp
 ```
 
-**Option 2: Train with small XY adjustments**
+**Training with small XY adjustments:**
 ```bash
 cd gripper_mj
-ENV_TYPE=grasp ALLOW_XY_ADJUST=true python train_ppo.py
+python train_ppo_improved.py --env-type grasp --allow-xy-adjust
 ```
 
-**Option 3: Initialize from Stage 1 weights (transfer learning)**
+**Training with custom parameters:**
 ```bash
 cd gripper_mj
-ENV_TYPE=grasp python train_ppo.py --load-checkpoint checkpoints/ppo_model_final.zip
-```
-
-**Option 4: Use helper script**
-```bash
-cd gripper_mj
-./train_grasp_env.sh                    # Train from scratch
-./train_grasp_env.sh --load-env-a       # Load from Stage 1
+python train_ppo_improved.py --env-type grasp --train-timesteps 200000 --learning-rate 3e-4
 ```
 
 **Training parameters:**
 - Default training timesteps: 100,000
-- Shorter episodes (200 steps max) since gripper starts close
-- Model saved to: `gripper_mj/checkpoints/ppo_model_final.zip` (or `ppo_model_grasp_final.zip`)
+- Episodes: 500 steps max
+- Model saved to: `gripper_mj/checkpoints_grasp/ppo_grasp_model_final.zip`
+- Reward logs: `gripper_mj/checkpoints_grasp/reward_log_grasp.csv`
 
-### Stage 3: Lift and Hover Training (Improved)
+### Stage 3: Lift and Hover Training (Env C)
 
 Train the gripper to raise a grasped block and hover over a target position. The gripper starts with the block already grasped.
 
 **Basic training:**
 ```bash
 cd gripper_mj
-python train_ppo_lift_improved.py
+python train_ppo_improved.py --env-type lift
+```
+
+**Training with ablation study:**
+```bash
+cd gripper_mj
+python train_ppo_improved.py --env-type lift --ablation
 ```
 
 **Training with custom parameters:**
 ```bash
 cd gripper_mj
-python train_ppo_lift_improved.py --train-timesteps 200000 --learning-rate 3e-4
-```
-
-**Evaluation only (load trained model):**
-```bash
-cd gripper_mj
-python train_ppo_lift_improved.py --eval-only
-```
-
-**Evaluation with video rendering:**
-```bash
-cd gripper_mj
-python train_ppo_lift_improved.py --eval-only --render-video
+python train_ppo_improved.py --env-type lift --train-timesteps 200000 --learning-rate 3e-4
 ```
 
 **Training parameters:**
 - Default training timesteps: 100,000
 - Episodes: 500 steps max
-- Checkpoints saved every 25,000 timesteps to `gripper_mj/checkpoints_lift/`
-- Final model: `gripper_mj/checkpoints_lift/ppo_lift_model_final.zip`
+- Checkpoints saved every 25,000 timesteps
+- Model saved to: `gripper_mj/checkpoints_lift/ppo_lift_model_final.zip` (or `checkpoints_lift_ablation/` with `--ablation`)
+- Reward logs: `gripper_mj/checkpoints_lift/reward_log_lift.csv`
 - Videos saved to: `gripper_mj/videos_lift/`
 
-## Testing
+### Stage 4: Release Training (Env D)
 
-### Test Position Policy (Env A)
+Train the gripper to release the block at the target position. The gripper starts with the block already grasped and positioned above a target.
 
-Test the positioning policy:
-
-**Basic test:**
+**Basic training:**
 ```bash
 cd gripper_mj
-python train_ppo.py --eval-only
+python train_ppo_improved.py --env-type release
 ```
 
-**Test with video rendering:**
+**Training with custom parameters:**
 ```bash
 cd gripper_mj
-python train_ppo.py --eval-only --render-video
+python train_ppo_improved.py --env-type release --train-timesteps 200000 --learning-rate 3e-4
 ```
 
-**Test specific checkpoint:**
+**Training parameters:**
+- Default training timesteps: 100,000
+- Episodes: 500 steps max
+- Checkpoints saved every 25,000 timesteps
+- Model saved to: `gripper_mj/checkpoints_release/ppo_release_model_final.zip`
+- Reward logs: `gripper_mj/checkpoints_release/reward_log_release.csv`
+- Videos saved to: `gripper_mj/videos_release/`
+
+## Evaluation
+
+All environments support evaluation mode using the unified training scripts. Both PPO and SAC scripts support the same evaluation arguments.
+
+### Evaluation Only (Load Trained Model)
+
+**Basic evaluation (PPO):**
 ```bash
 cd gripper_mj
-python train_ppo.py --eval-only --model-path checkpoints/ppo_model_final.zip --render-video
+python train_ppo_improved.py --env-type [position|grasp|lift|release] --eval-only
 ```
 
-**Test with stochastic actions (for exploration):**
+**Basic evaluation (SAC):**
 ```bash
 cd gripper_mj
-python train_ppo.py --eval-only --stochastic --render-video
+python train_sac_improved.py --env-type [position|grasp|lift|release] --eval-only
 ```
 
-### Test Grasp Policy (Env B)
-
-Test the grasping policy using the dedicated test script:
-
-**Basic test:**
+**Evaluation with video rendering:**
 ```bash
 cd gripper_mj
-python test_grasp_policy.py --checkpoint checkpoints/ppo_model_final.zip
+python train_ppo_improved.py --env-type [position|grasp|lift|release] --eval-only --render-video
+# or
+python train_sac_improved.py --env-type [position|grasp|lift|release] --eval-only --render-video
 ```
 
-**Test with video rendering:**
+**Evaluation with specific model:**
 ```bash
 cd gripper_mj
-python test_grasp_policy.py --checkpoint checkpoints/ppo_model_final.zip --render-video
+python train_ppo_improved.py --env-type [position|grasp|lift|release] --eval-only --model-path checkpoints/ppo_position_model_final.zip --render-video
+# or for SAC
+python train_sac_improved.py --env-type [position|grasp|lift|release] --eval-only --model-path checkpoints_sac_position/sac_position_model_final.zip --render-video
 ```
 
-**Test with XY adjustments (if trained with it):**
+**Evaluation with stochastic actions (for exploration):**
 ```bash
 cd gripper_mj
-python test_grasp_policy.py --checkpoint checkpoints/ppo_model_final.zip --allow-xy --render-video
+python train_ppo_improved.py --env-type [position|grasp|lift|release] --eval-only --stochastic --render-video
 ```
 
-**Custom number of episodes:**
+**Evaluation with custom action scaling:**
 ```bash
 cd gripper_mj
-python test_grasp_policy.py --checkpoint checkpoints/ppo_model_final.zip --episodes 50 --render-video
+python train_ppo_improved.py --env-type [position|grasp|lift|release] --eval-only --action-scale 0.5 --render-video
 ```
 
-**Auto-detect checkpoint:**
+**Evaluation with debug logging:**
 ```bash
 cd gripper_mj
-python test_grasp_policy.py --render-video
+python train_ppo_improved.py --env-type [position|grasp|lift|release] --eval-only --debug-log --render-video
 ```
 
-### Test Output
+### Evaluation Output
 
-The test scripts provide:
+The evaluation provides:
 - Per-episode results (success/failure, reward, steps, etc.)
 - Summary statistics:
   - Success rate
-  - Mean/std/min/max rewards
+  - Mean reward
   - Episode length statistics
-  - Grasp timing (for grasping policy)
+  - Environment-specific metrics (distances, heights, velocities, etc.)
 
-Videos are saved to: `gripper_mj/videos/`
+Videos are saved to environment-specific directories:
+- Position: `gripper_mj/videos/` (PPO) or `gripper_mj/videos_sac/` (SAC)
+- Grasp: `gripper_mj/videos_grasp/` (PPO) or `gripper_mj/videos_sac_grasp/` (SAC)
+- Lift: `gripper_mj/videos_lift/` (PPO) or `gripper_mj/videos_sac_lift/` (SAC)
+  - With `--ablation`: `videos_lift_ablation/` (PPO) or `videos_sac_lift_ablation/` (SAC)
+- Release: `gripper_mj/videos_release/` (PPO) or `gripper_mj/videos_sac_release/` (SAC)
+
+## SAC Training (Alternative Algorithm)
+
+The project also supports Soft Actor-Critic (SAC) training for all stages using the unified `train_sac_improved.py` script. SAC is an off-policy algorithm that can be more sample-efficient than PPO.
+
+**Position:**
+```bash
+cd gripper_mj
+python train_sac_improved.py --env-type position
+```
+
+**Grasp:**
+```bash
+cd gripper_mj
+python train_sac_improved.py --env-type grasp
+```
+
+**Lift:**
+```bash
+cd gripper_mj
+python train_sac_improved.py --env-type lift
+```
+
+**Lift with ablation study:**
+```bash
+cd gripper_mj
+python train_sac_improved.py --env-type lift --ablation
+```
+
+**Release:**
+```bash
+cd gripper_mj
+python train_sac_improved.py --env-type release
+```
+
+**Training with custom parameters:**
+```bash
+cd gripper_mj
+python train_sac_improved.py --env-type [position|grasp|lift|release] --train-timesteps 200000 --learning-rate 3e-4 --buffer-size 200000
+```
+
+**SAC-specific arguments:**
+- `--buffer-size`: Replay buffer size (default: 100000)
+- `--learning-starts`: Number of steps before learning starts (default: 1000)
+- `--batch-size`: Batch size for training (default: 256)
+- `--tau`: Soft update coefficient for target network (default: 0.005)
+- `--ent-coef`: Entropy coefficient - `"auto"` (default) or float value
+
+SAC checkpoints are saved to `checkpoints_sac_*/` directories, and reward logs follow the same naming convention. SAC also saves VecNormalize statistics (`.pkl` files) for observation normalization.
+
+## Plotting Training Metrics
+
+Use `plot.py` to visualize and compare training metrics between PPO and SAC:
+
+**Plot all metrics for a stage:**
+```bash
+cd gripper_mj
+python plot.py --position --all    # Position stage
+python plot.py --grasp --all       # Grasp stage
+python plot.py --lift --all        # Lift stage
+python plot.py --release --all     # Release stage
+```
+
+**Plot specific metrics:**
+```bash
+cd gripper_mj
+python plot.py --grasp --reward --episode-length
+python plot.py --lift --entropy-loss --value-loss
+```
+
+**Available metrics:**
+- `--reward`: Episode reward
+- `--episode-length`: Episode length
+- `--entropy-loss`: Entropy loss (separate plots for PPO and SAC)
+- `--value-loss`: Value loss (separate plots for PPO and SAC)
+- `--all`: All metrics (default if no specific metric is selected)
+
+**Smoothing window:**
+```bash
+cd gripper_mj
+python plot.py --grasp --reward --window 20  # Use window size of 20 for smoothing
+```
 
 ## Environment Details
 
 ### Env A: Position Environment (`GripperEnv`)
 - **Goal**: Position gripper horizontally over the block
-- **Action space**: 3D `[up/down, left/right, forward/back]` (up/down fixed)
+- **Action space**: 3D `[up/down, left/right, forward/back]` (up/down can be learnable with `--enable-updown`)
 - **Observation space**: 8D `[relative_x, relative_y, dist_x, dist_y, gripper_x, gripper_y, gripper_vel_x, gripper_vel_y]`
 - **Success**: Distance ≤ 0.01m (SUCCESS_THRESHOLD)
 - **Max steps**: 500
@@ -205,12 +306,12 @@ Videos are saved to: `gripper_mj/videos/`
 - **Goal**: Descend and grasp the block (gripper starts positioned above block)
 - **Action space**: 
   - 2D `[up/down, finger]` (default, no XY movement)
-  - 4D `[up/down, xy_x, xy_y, finger]` (with `ALLOW_XY_ADJUST=true`)
+  - 4D `[up/down, xy_x, xy_y, finger]` (with `--allow-xy-adjust`)
 - **Observation space**: 
-  - 4D `[vertical_dist, finger_state, grasped, gripper_z]` (without XY)
-  - 6D `[vertical_dist, horizontal_dist, finger_state, grasped, gripper_z, block_z]` (with XY)
+  - 6D `[rel_z, vertical_dist, finger_state, grasped, block_z, gripper_vel_z]` (without XY)
+  - 11D `[rel_x, rel_y, rel_z, vertical_dist, horizontal_dist, finger_state, grasped, block_z, gripper_vel_x, gripper_vel_y, gripper_vel_z]` (with XY)
 - **Success**: Successful grasp detected via contact
-- **Max steps**: 200
+- **Max steps**: 500
 
 ### Env C: Lift and Hover Environment (`GripperLiftEnv`)
 - **Goal**: Raise grasped block and hover over target position
@@ -223,15 +324,104 @@ Videos are saved to: `gripper_mj/videos/`
 - **Max steps**: 500
 - **Initial condition**: Gripper starts with block already grasped
 
+### Env D: Release Environment (`GripperReleaseEnv`)
+- **Goal**: Release the block at the target position (gripper stays fixed, target is randomized below)
+- **Action space**: 4D `[up/down, left/right, forward/back, finger]` (gripper position is fixed, actions control positioning)
+- **Observation space**: 10D `[rel_gripper_to_target_dx, rel_gripper_to_target_dy, gripper_height_above_target, horizontal_dist_gripper_to_target, block_height_above_ground, finger_distance, gripper_vel_x, gripper_vel_y, block_vel_z, grasped]`
+  - All positions are relative to simplify learning
+  - Gripper position is fixed to avoid initial velocity drift
+- **Success**: Block lands on ground within threshold of target (both `block_released` and `block_landed` must be True)
+- **Max steps**: 500
+- **Initial condition**: Gripper starts with block already grasped at fixed position
+
 ## Checkpoints
 
-Checkpoints are saved in `gripper_mj/checkpoints/` (Stages 1 & 2) and `gripper_mj/checkpoints_lift/` (Stage 3):
-- `ppo_model_final.zip` - Final model (latest training, Stages 1 & 2)
-- `ppo_model_<timesteps>_steps.zip` - Intermediate checkpoints
-- `ppo_model_<timesteps>.pt` - PyTorch state dicts
-- `ppo_model_grasp_final.zip` - Grasp-specific final model (Stage 2)
-- `ppo_lift_model_final.zip` - Lift-specific final model (Stage 3)
-- `ppo_lift_model_<timesteps>.pt` - Lift PyTorch checkpoints
+Checkpoints are saved in environment-specific directories:
+
+### Position (Stage 1)
+- Directory: `gripper_mj/checkpoints/`
+- Files:
+  - `ppo_position_model_final.zip` - Final model
+  - `ppo_position_model_<timesteps>_steps.zip` - Intermediate checkpoints
+  - `ppo_position_model_<timesteps>.pt` - PyTorch state dicts
+  - `reward_log_position.csv` - Training metrics log
+
+### Grasp (Stage 2)
+- Directory: `gripper_mj/checkpoints_grasp/`
+- Files:
+  - `ppo_grasp_model_final.zip` - Final model
+  - `ppo_grasp_model_<timesteps>_steps.zip` - Intermediate checkpoints
+  - `ppo_grasp_model_<timesteps>.pt` - PyTorch state dicts
+  - `reward_log_grasp.csv` - Training metrics log
+
+### Lift (Stage 3)
+- Directory: `gripper_mj/checkpoints_lift/` (or `checkpoints_lift_ablation/` with `--ablation`)
+- Files:
+  - `ppo_lift_model_final.zip` - Final model (or `ppo_lift_model_ablation_final.zip`)
+  - `ppo_lift_model_<timesteps>_steps.zip` - Intermediate checkpoints
+  - `ppo_lift_model_<timesteps>.pt` - PyTorch state dicts
+  - `reward_log_lift.csv` - Training metrics log (or `reward_log_lift_ablation.csv`)
+
+### Release (Stage 4)
+- Directory: `gripper_mj/checkpoints_release/`
+- Files:
+  - `ppo_release_model_final.zip` - Final model
+  - `ppo_release_model_<timesteps>_steps.zip` - Intermediate checkpoints
+  - `ppo_release_model_<timesteps>.pt` - PyTorch state dicts
+  - `reward_log_release.csv` - Training metrics log
+
+### SAC Checkpoints
+SAC models are saved in environment-specific directories:
+- Position: `gripper_mj/checkpoints_sac_position/`
+- Grasp: `gripper_mj/checkpoints_sac_grasp/`
+- Lift: `gripper_mj/checkpoints_sac_lift/` (or `checkpoints_sac_lift_ablation/` with `--ablation`)
+- Release: `gripper_mj/checkpoints_sac_release/`
+
+Files follow the same naming convention as PPO:
+- `sac_[env]_model_final.zip` - Final model
+- `sac_[env]_model_<timesteps>_steps.zip` - Intermediate checkpoints
+- `sac_[env]_model_<timesteps>.pt` - PyTorch state dicts
+- `sac_[env]_model_vec_normalize.pkl` - VecNormalize statistics (SAC-specific)
+- `reward_log_[env].csv` - Training metrics log
+
+## Training Metrics Logging
+
+All training scripts log metrics to CSV files using `RewardLoggingCallback`:
+- `timesteps`: Current training timesteps
+- `episode_reward`: Average episode reward for the rollout
+- `episode_length`: Average episode length for the rollout
+- `entropy_loss`: Entropy loss (policy gradient loss for PPO, actor loss for SAC)
+- `value_loss`: Value loss (for PPO) or critic loss (for SAC)
+- `explained_variance`: Explained variance (PPO only, NaN for SAC)
+
+These logs can be visualized using `plot.py` to compare PPO and SAC performance.
+
+## Command-Line Arguments
+
+### Common Arguments (All Environments)
+- `--env-type`: Environment type - `position`, `grasp`, `lift`, or `release` (default: `position`)
+- `--train-timesteps`: Total timesteps for training (default: 100000)
+- `--learning-rate`: Learning rate (default: 3e-4)
+- `--ent-coef`: Entropy coefficient (default: 0.01 for PPO, `"auto"` for SAC)
+- `--eval-only`: Skip training and only run validation
+- `--render-video`: Save validation videos as .mp4 files
+- `--model-path`: Path to a saved model (.zip) to load for evaluation
+- `--stochastic`: Use stochastic actions during evaluation
+- `--debug-log`: Print per-step diagnostics
+- `--action-scale`: Multiply actions by this scale during evaluation (default: 1.0)
+- `--eval-episodes`: Number of evaluation episodes (default: 10)
+
+### Environment-Specific Arguments
+- `--enable-updown`: Enable learnable up/down control (for position environment)
+- `--allow-xy-adjust`: Allow small XY adjustments (for grasp environment)
+- `--ablation`: Run ablation study (for lift environment)
+
+### SAC-Specific Arguments
+- `--buffer-size`: Replay buffer size (default: 100000)
+- `--learning-starts`: Number of steps before learning starts (default: 1000)
+- `--batch-size`: Batch size for training (default: 256)
+- `--tau`: Soft update coefficient for target network (default: 0.005)
+- `--normalize-path`: Path to VecNormalize stats (.pkl) to load for evaluation
 
 ## Running the MuJoCo Simulation (Original)
 
