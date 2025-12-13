@@ -23,7 +23,7 @@ import os
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
-from stable_baselines3 import PPO
+from stable_baselines3 import PPO, SAC
 from typing import Dict, List, Tuple, Optional
 
 # Import environments
@@ -80,7 +80,11 @@ def run_validation(model_path: str, env_type: str, num_episodes: int = VALIDATIO
     env = create_env(env_type)
     
     # Load model
-    model = PPO.load(model_path, env=env)
+    try:
+        model = PPO.load(model_path, env=env)
+    except Exception as e:
+        model = SAC.load(model_path, env=env)
+
     
     # Initialize result containers
     results = {
