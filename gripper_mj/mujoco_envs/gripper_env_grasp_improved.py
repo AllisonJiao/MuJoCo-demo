@@ -97,7 +97,7 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         observation_space = Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float64)
         
         folder_path = os.path.dirname(os.path.abspath(__file__))
-        model_path = os.path.join(folder_path, os.pardir, "model", "GripperGPT.xml")
+        model_path = os.path.join(folder_path, os.pardir, "../model", "GripperGPT.xml")
         
         MuJocoPyEnv.__init__(
             self,
