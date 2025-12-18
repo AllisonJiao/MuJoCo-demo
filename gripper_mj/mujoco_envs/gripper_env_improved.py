@@ -46,7 +46,7 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         "render_fps": 60,
     }
 
-    def __init__(self, render_mode=None, width=480, height=480, enable_updown_control=True, ablation=False, **kwargs):
+    def __init__(self, render_mode=None, width=480, height=480, enable_updown_control=True, **kwargs):
         utils.EzPickle.__init__(self, render_mode=render_mode, width=width, height=height, enable_updown_control=enable_updown_control, **kwargs)
         
         # Observation: [rel_dx, rel_dy, rel_dz, gripper_z, horizontal_dist, vertical_dist, finger_distance, gripper_vel_x, gripper_vel_y]
@@ -54,7 +54,7 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         observation_space = Box(low=-np.inf, high=np.inf, shape=(9,), dtype=np.float64)
 
         folder_path = os.path.dirname(os.path.abspath(__file__))
-        model_path = os.path.join(folder_path, os.pardir, "model", "GripperGPT.xml")
+        model_path = os.path.join(folder_path, os.pardir, "../model", "GripperGPT.xml")
 
         MuJocoPyEnv.__init__(
             self,
@@ -70,7 +70,6 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         self.step_count = 0
         self.max_steps = MAX_STEPS
         self.enable_updown_control = enable_updown_control
-        self.ablation = ablation
         
         # actuator ids
         self.updown = self.model.actuator("up/down").id
@@ -190,9 +189,6 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
                     stuck_penalty = 2.0*STUCK_PENALTY
         # update stored previous distance for next step
         self.prev_dist = dist
-        if self.ablation:
-            progress_reward = 0.0
-            stuck_penalty = 0.0
 
         # Precision bonus: exponential reward as agent gets very close (encourages exact convergence)
         precision_bonus = 0.0

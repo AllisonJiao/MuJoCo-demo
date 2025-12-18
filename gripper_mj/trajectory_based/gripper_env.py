@@ -38,7 +38,7 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
         observation_space = Box(low=-np.inf, high=np.inf, shape=(8,), dtype=np.float64)
         MuJocoPyEnv.__init__(
             self,
-            model_path=os.path.join("..", "model", "GripperGPT.xml"),
+            model_path=os.path.join("..", "../model", "GripperGPT.xml"),
             frame_skip=1,
             observation_space=observation_space,
             **kwargs

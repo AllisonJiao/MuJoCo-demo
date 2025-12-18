@@ -6,7 +6,8 @@ import argparse
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description='Plot training metrics for PPO and SAC')
-parser.add_argument('--position', action='store_true', help='Plot position stage (grasp) metrics')
+parser.add_argument('--position', action='store_true', help='Plot position stage metrics')
+parser.add_argument('--grasp', action='store_true', help='Plot grasp stage metrics')
 parser.add_argument('--lift', action='store_true', help='Plot lift stage metrics')
 parser.add_argument('--release', action='store_true', help='Plot release stage metrics')
 parser.add_argument('--reward', action='store_true', help='Plot episode reward')
@@ -18,17 +19,19 @@ parser.add_argument('--window', type=int, default=10, help='Smoothing window siz
 args = parser.parse_args()
 
 # Determine which stage to plot
-stages = [args.position, args.lift, args.release]
+stages = [args.position, args.grasp, args.lift, args.release]
 if sum(stages) == 0:
     # Default to position if no stage is specified
     args.position = True
     stage = 'position'
 elif sum(stages) > 1:
-    print("Error: Please specify only one stage (--position, --lift, or --release)")
+    print("Error: Please specify only one stage (--position, --grasp, --lift, or --release)")
     exit(1)
 else:
     if args.position:
         stage = 'position'
+    elif args.grasp:
+        stage = 'grasp'
     elif args.lift:
         stage = 'lift'
     else:
@@ -46,6 +49,9 @@ sac = None
 if stage == 'position':
     ppo_path = "checkpoints/reward_log_position.csv"
     sac_path = "checkpoints_sac_position/reward_log_position.csv"
+elif stage == 'grasp':
+    ppo_path = "checkpoints_grasp/reward_log_grasp.csv"
+    sac_path = "checkpoints_sac_grasp/reward_log_grasp.csv"
 elif stage == 'lift':
     ppo_path = "checkpoints_lift/reward_log_lift.csv"
     sac_path = "checkpoints_sac_lift/reward_log_lift.csv"

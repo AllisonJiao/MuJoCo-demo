@@ -8,14 +8,21 @@ import argparse
 import numpy as np
 from pathlib import Path
 import cv2
-from gripper_env_improved import GripperEnv  # Improved positioning environment
-from gripper_grasp_env_improved import GripperGraspEnv, MAX_STEPS as GRASP_MAX_STEPS  # Improved grasping environment
+from mujoco_envs.gripper_env_improved import GripperEnv  # Improved positioning environment
+from mujoco_envs.gripper_env_grasp_improved import GripperGraspEnv, MAX_STEPS as GRASP_MAX_STEPS  # Improved grasping environment
+from mujoco_envs.gripper_env_lift_improved import GripperLiftEnv, MAX_STEPS as LIFT_MAX_STEPS  # Improved lift environment
+from mujoco_envs.gripper_env_release import GripperReleaseEnv, MAX_STEPS as RELEASE_MAX_STEPS  # Release environment
 from callbacks import RewardLoggingCallback
 
 TRAIN_EPS = 100000
 VALID_EPS = 10
 VALID_MAX_STEPS_POSITION = 500
 VALID_MAX_STEPS_GRASP = 500  # Shorter episodes for grasping task
+
+# Checkpoint configuration
+CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints")
+CHECKPOINT_INTERVAL = 25000
+N_ENVS = 4
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser()
@@ -30,25 +37,26 @@ parser.add_argument("--ent-coef", type=float, default=0.01, help="Entropy coeffi
 parser.add_argument("--enable-updown", action="store_true", help="Enable learnable up/down control (for positioning env)")
 parser.add_argument("--allow-xy-adjust", action="store_true", help="Allow small XY adjustments (for grasping env)")
 parser.add_argument("--learning-rate", type=float, default=3e-4, help="Learning rate")
-parser.add_argument("--env-type", type=str, default="position", choices=["position", "grasp"], 
-                    help="Environment type: 'position' for positioning or 'grasp' for grasping")
+parser.add_argument("--env-type", type=str, default="position", choices=["position", "grasp", "lift", "release"], 
+                    help="Environment type: 'position' for positioning, 'grasp' for grasping, 'lift' for lift, or 'release' for release")
+parser.add_argument("--ablation", action="store_true", help="Run ablation study (for lift environment)")
 parser.add_argument("--eval-episodes", type=int, default=VALID_EPS, help="Number of evaluation episodes")
-parser.add_argument("--ablation", action="store_true", help="Run ablation study")
 args = parser.parse_args()
 
 # Render mode configuration
 RENDER_MODE = "human" if args.render_video and args.eval_only else None
-ABLATION_TAG = "_ablation" if args.ablation else ""
-
-# Checkpoint configuration
-CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), f"checkpoints{ABLATION_TAG}")
-CHECKPOINT_INTERVAL = 25000
-N_ENVS = 4
 
 # Adjust checkpoint directory and max steps based on environment type
+ABLATION_TAG = "_ablation" if args.ablation and args.env_type == "lift" else ""
 if args.env_type == "grasp":
     CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints_grasp")
     VALID_MAX_STEPS = VALID_MAX_STEPS_GRASP
+elif args.env_type == "lift":
+    CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), f"checkpoints_lift{ABLATION_TAG}")
+    VALID_MAX_STEPS = LIFT_MAX_STEPS
+elif args.env_type == "release":
+    CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints_release")
+    VALID_MAX_STEPS = RELEASE_MAX_STEPS
 else:
     VALID_MAX_STEPS = VALID_MAX_STEPS_POSITION
 
@@ -62,11 +70,21 @@ def make():
         if RENDER_MODE:
             return GripperGraspEnv(render_mode=RENDER_MODE, allow_xy_adjust=args.allow_xy_adjust)
         return GripperGraspEnv(allow_xy_adjust=args.allow_xy_adjust)
+    elif args.env_type == "lift":
+        # Env C: Lift and move to target position
+        if RENDER_MODE:
+            return GripperLiftEnv(render_mode=RENDER_MODE, ablation=args.ablation)
+        return GripperLiftEnv(ablation=args.ablation)
+    elif args.env_type == "release":
+        # Env D: Release the block
+        if RENDER_MODE:
+            return GripperReleaseEnv(render_mode=RENDER_MODE)
+        return GripperReleaseEnv()
     else:
         # Env A: Positioning environment (default)
         if RENDER_MODE:
-            return GripperEnv(render_mode=RENDER_MODE, enable_updown_control=args.enable_updown, ablation=args.ablation)
-        return GripperEnv(enable_updown_control=args.enable_updown, ablation=args.ablation)
+            return GripperEnv(render_mode=RENDER_MODE, enable_updown_control=args.enable_updown)
+        return GripperEnv(enable_updown_control=args.enable_updown)
 
 # Skip env creation and training if eval-only mode
 if not args.eval_only:
@@ -75,6 +93,10 @@ if not args.eval_only:
 
     if args.env_type == "grasp":
         print(f"PPO training for grasping with XY adjust: {args.allow_xy_adjust}")
+    elif args.env_type == "lift":
+        print(f"PPO training for lift and hover task{' with ablation' if args.ablation else ''}")
+    elif args.env_type == "release":
+        print(f"PPO training for release task")
     else:
         print(f"PPO training for positioning with up/down control: {args.enable_updown}")
     print(f"ent_coef={args.ent_coef}, learning_rate={args.learning_rate}, train_timesteps={args.train_timesteps}")
@@ -118,7 +140,14 @@ class PyTorchCheckpointCallback(BaseCallback):
         
     def _on_step(self) -> bool:
         if self.num_timesteps - self.last_save >= self.save_freq:
-            model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else "ppo_model"
+            if args.env_type == "grasp":
+                model_prefix = "ppo_grasp_model"
+            elif args.env_type == "lift":
+                model_prefix = f"ppo_lift_model{ABLATION_TAG}"
+            elif args.env_type == "release":
+                model_prefix = "ppo_release_model"
+            else:
+                model_prefix = "ppo_position_model"
             checkpoint_path = os.path.join(
                 self.save_path, 
                 f"{model_prefix}_{self.num_timesteps}.pt"
@@ -134,7 +163,14 @@ class PyTorchCheckpointCallback(BaseCallback):
         return True
 
 if not args.eval_only:
-    model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else f"ppo_model{ABLATION_TAG}"
+    if args.env_type == "grasp":
+        model_prefix = "ppo_grasp_model"
+    elif args.env_type == "lift":
+        model_prefix = f"ppo_lift_model{ABLATION_TAG}"
+    elif args.env_type == "release":
+        model_prefix = "ppo_release_model"
+    else:
+        model_prefix = "ppo_position_model"
     checkpoint_callback = CheckpointCallback(
         save_freq=max(CHECKPOINT_INTERVAL // N_ENVS, 1),
         save_path=CHECKPOINT_DIR,
@@ -148,10 +184,15 @@ if not args.eval_only:
         verbose=1
     )
 
-    reward_log_path = os.path.join(
-        CHECKPOINT_DIR,
-        "reward_log_grasp.csv" if args.env_type == "grasp" else f"reward_log_position{ABLATION_TAG}.csv"
-    )
+    # Set reward log path based on environment type
+    if args.env_type == "grasp":
+        reward_log_path = os.path.join(CHECKPOINT_DIR, "reward_log_grasp.csv")
+    elif args.env_type == "lift":
+        reward_log_path = os.path.join(CHECKPOINT_DIR, f"reward_log_lift{ABLATION_TAG}.csv")
+    elif args.env_type == "release":
+        reward_log_path = os.path.join(CHECKPOINT_DIR, "reward_log_release.csv")
+    else:
+        reward_log_path = os.path.join(CHECKPOINT_DIR, "reward_log_position.csv")
 
     reward_logger = RewardLoggingCallback(log_path=reward_log_path, verbose=1)
 
@@ -162,7 +203,14 @@ if not args.eval_only:
     )
 
     # Save final model
-    model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else f"ppo_model{ABLATION_TAG}"
+    if args.env_type == "grasp":
+        model_prefix = "ppo_grasp_model"
+    elif args.env_type == "lift":
+        model_prefix = f"ppo_lift_model{ABLATION_TAG}"
+    elif args.env_type == "release":
+        model_prefix = "ppo_release_model"
+    else:
+        model_prefix = "ppo_position_model"
     final_model_path = os.path.join(CHECKPOINT_DIR, f"{model_prefix}_final.zip")
     model.save(final_model_path)
     print(f"Saved final model to {final_model_path}")
@@ -190,6 +238,16 @@ if args.env_type == "grasp":
         env = GripperGraspEnv(render_mode=validation_render_mode, width=video_width, height=video_height, allow_xy_adjust=args.allow_xy_adjust)
     else:
         env = GripperGraspEnv(render_mode=validation_render_mode, allow_xy_adjust=args.allow_xy_adjust)
+elif args.env_type == "lift":
+    if args.render_video:
+        env = GripperLiftEnv(render_mode=validation_render_mode, width=video_width, height=video_height, ablation=args.ablation)
+    else:
+        env = GripperLiftEnv(render_mode=validation_render_mode, ablation=args.ablation)
+elif args.env_type == "release":
+    if args.render_video:
+        env = GripperReleaseEnv(render_mode=validation_render_mode, width=video_width, height=video_height)
+    else:
+        env = GripperReleaseEnv(render_mode=validation_render_mode)
 else:
     env = GripperEnv(render_mode=validation_render_mode, width=video_width, height=video_height, enable_updown_control=args.enable_updown)
 
@@ -202,7 +260,14 @@ if args.eval_only:
         print(f"Loading model from {args.model_path}")
         model = PPO.load(args.model_path, env=env)
     else:
-        model_prefix = "ppo_grasp_model" if args.env_type == "grasp" else "ppo_model"
+        if args.env_type == "grasp":
+            model_prefix = "ppo_grasp_model"
+        elif args.env_type == "lift":
+            model_prefix = f"ppo_lift_model{ABLATION_TAG}"
+        elif args.env_type == "release":
+            model_prefix = "ppo_release_model"
+        else:
+            model_prefix = "ppo_position_model"
         final_model_path = os.path.join(CHECKPOINT_DIR, f"{model_prefix}_final.zip")
         if os.path.exists(final_model_path):
             print(f"Loading model from {final_model_path}")
@@ -214,7 +279,14 @@ if args.eval_only:
 # Create video directory if rendering videos
 VIDEO_DIR = None
 if args.render_video:
-    video_dir_name = "videos_grasp" if args.env_type == "grasp" else f"videos{ABLATION_TAG}"
+    if args.env_type == "grasp":
+        video_dir_name = "videos_grasp"
+    elif args.env_type == "lift":
+        video_dir_name = f"videos_lift{ABLATION_TAG}"
+    elif args.env_type == "release":
+        video_dir_name = "videos_release"
+    else:
+        video_dir_name = "videos"
     VIDEO_DIR = os.path.join(os.path.dirname(__file__), video_dir_name)
     os.makedirs(VIDEO_DIR, exist_ok=True)
     print(f"Videos will be saved to {VIDEO_DIR}")
@@ -236,6 +308,18 @@ for i in range(args.eval_episodes):
         ep_grasped = []
         ep_ground_contact = []
         ep_vel = []
+    elif args.env_type == "lift":
+        ep_horiz = []
+        ep_height = []
+        ep_vel = []
+        ep_grasped = []
+    elif args.env_type == "release":
+        ep_horiz = []
+        ep_block_z = []
+        ep_finger_dist = []
+        ep_grasped = []
+        ep_released = []
+        ep_landed = []
     else:
         ep_horiz = []
         ep_dz = []
@@ -264,14 +348,30 @@ for i in range(args.eval_episodes):
                 print(f"  Step {step}: action={action} vertical_dist={info.get('vertical_dist', 0.0):.4f} "
                       f"horizontal_dist={info.get('horizontal_dist', 0.0):.4f} grasped={info.get('grasped', False)} "
                       f"ground_contact={info.get('ground_contact', False)} reward={r:.4f}")
+        elif args.env_type == "lift":
+            ep_horiz.append(info.get("horizontal_dist", np.nan))
+            ep_height.append(info.get("block_height", np.nan))
+            ep_vel.append(info.get("velocity", np.nan))
+            ep_grasped.append(info.get("grasped", False))
+            if log_this_ep and step % 10 == 0:
+                print(f"  Step {step}: action={action} horiz_dist={info.get('horizontal_dist', 0.0):.4f} "
+                      f"height={info.get('block_height', 0.0):.4f} grasped={info.get('grasped', False)} reward={r:.4f}")
+        elif args.env_type == "release":
+            ep_horiz.append(info.get("horizontal_dist", np.nan))
+            ep_block_z.append(info.get("block_z", np.nan))
+            ep_finger_dist.append(info.get("finger_distance", np.nan))
+            ep_grasped.append(info.get("grasped", False))
+            ep_released.append(info.get("block_released", False))
+            ep_landed.append(info.get("block_landed", False))
+            if log_this_ep and step % 10 == 0:
+                print(f"  Step {step}: action={action} horiz_dist={info.get('horizontal_dist', 0.0):.4f} "
+                      f"block_z={info.get('block_z', 0.0):.4f} finger={info.get('finger_distance', 0.0):.4f} "
+                      f"grasped={info.get('grasped', False)} released={info.get('block_released', False)} "
+                      f"landed={info.get('block_landed', False)} reward={r:.4f}")
         else:
             ep_horiz.append(info.get("horizontal_dist", np.nan))
             ep_dz.append(info.get("dz", np.nan))
             ep_vel.append(info.get("velocity", np.nan))
-            
-            if log_this_ep and step % 10 == 0:
-                print(f"  Step {step}: action={action} horiz_dist={info.get('horizontal_dist', 0.0):.4f} "
-                      f"dz={info.get('dz', 0.0):.4f} reward={r:.4f}")
 
         if args.render_video:
             frame = env.render()
@@ -279,17 +379,29 @@ for i in range(args.eval_episodes):
                 frames.append(frame)
 
         if term or trunc:
-            # For grasping env, success is when grasped
+            # Success conditions vary by environment type
             if args.env_type == "grasp":
                 successes += int(info.get("grasped", False))
+            elif args.env_type == "lift":
+                successes += int(term)  # Lift env sets term=True on success
+            elif args.env_type == "release":
+                successes += int(term)  # Release env sets term=True on success
             else:
-                successes += int(term)
+                successes += int(term)  # Position env sets term=True on success
             obs, info = env.reset()
             break
 
     # Save video if frames were collected
     if args.render_video and len(frames) > 0:
-        video_prefix = "validation_grasp_ep" if args.env_type == "grasp" else f"validation_ep{ABLATION_TAG}_ep"
+        if args.env_type == "grasp":
+            video_prefix = "validation_grasp_ep"
+        elif args.env_type == "lift":
+            video_prefix = f"validation_lift{ABLATION_TAG}_ep"
+        elif args.env_type == "release":
+            video_prefix = "validation_release_ep"
+        else:
+            video_prefix = "validation_ep"
+        
         video_path = os.path.join(VIDEO_DIR, f"{video_prefix}_{i:03d}.mp4")
         h, w = frames[0].shape[:2]
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -316,6 +428,18 @@ for i in range(args.eval_episodes):
             print(f"  final vertical_dist: {ep_vertical_dist[-1]:.4f} horizontal_dist: {ep_horizontal_dist[-1]:.4f}")
             if len(ep_vel) > 0 and not (isinstance(ep_vel[-1], np.ndarray) and np.isnan(ep_vel[-1]).any()):
                 print(f"  final velocity: {ep_vel[-1]}")
+        elif args.env_type == "lift":
+            print(f"  horiz dist mean: {np.nanmean(ep_horiz):.4f} std: {np.nanstd(ep_horiz):.4f}")
+            print(f"  height mean: {np.nanmean(ep_height):.4f} std: {np.nanstd(ep_height):.4f}")
+            print(f"  grasped: {sum(ep_grasped)}/{len(ep_grasped)} steps")
+            print(f"  final dist: {ep_horiz[-1]:.4f} height: {ep_height[-1]:.4f} vel: {ep_vel[-1]}")
+        elif args.env_type == "release":
+            print(f"  horiz dist mean: {np.nanmean(ep_horiz):.4f} std: {np.nanstd(ep_horiz):.4f}")
+            print(f"  block_z mean: {np.nanmean(ep_block_z):.4f} std: {np.nanstd(ep_block_z):.4f}")
+            print(f"  finger_dist mean: {np.nanmean(ep_finger_dist):.4f} std: {np.nanstd(ep_finger_dist):.4f}")
+            print(f"  grasped: {sum(ep_grasped)}/{len(ep_grasped)} steps")
+            print(f"  released: {any(ep_released)}, landed: {any(ep_landed)}")
+            print(f"  final dist: {ep_horiz[-1]:.4f} block_z: {ep_block_z[-1]:.4f} finger: {ep_finger_dist[-1]:.4f}")
         else:
             print(f"  horiz dist mean: {np.nanmean(ep_horiz):.4f} std: {np.nanstd(ep_horiz):.4f}")
             print(f"  dz mean: {np.nanmean(ep_dz):.4f} std: {np.nanstd(ep_dz):.4f}")
