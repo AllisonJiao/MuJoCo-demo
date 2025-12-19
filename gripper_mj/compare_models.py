@@ -27,10 +27,10 @@ from stable_baselines3 import PPO, SAC
 from typing import Dict, List, Tuple, Optional
 
 # Import environments
-from gripper_env_improved import GripperEnv
-from gripper_grasp_env_improved import GripperGraspEnv
-from gripper_env_lift_improved import GripperLiftEnv
-from gripper_env_release import GripperReleaseEnv
+from mujoco_envs.gripper_env_improved import GripperEnv
+from mujoco_envs.gripper_env_grasp_improved import GripperGraspEnv
+from mujoco_envs.gripper_env_lift_improved import GripperLiftEnv
+from mujoco_envs.gripper_env_release import GripperReleaseEnv
 
 
 # Constants
