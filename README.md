@@ -293,6 +293,27 @@ cd gripper_mj
 python plot.py --grasp --reward --window 20  # Use window size of 20 for smoothing
 ```
 
+## Model Comparison (compare_models.py)
+
+Use `compare_models.py` to validate and compare two trained models by running validation episodes and producing comparative histograms. This is useful for ablation studies and stage-to-stage comparisons.
+
+Basic usage:
+```bash
+cd gripper_mj
+python compare_models.py --model1 <path_to_model1.zip> --model2 <path_to_model2.zip> --env-type position --name1 modelA --name2 modelB
+```
+
+Notes:
+- The canonical environment type name is `position`. The older alias `hover` is accepted for backward compatibility.
+- Supported `--env-type` values: `position` (alias: `hover`), `grasp`, `lift`, `release`.
+- The script saves comparison images to `gripper_mj/comparison_results/` by default.
+- To run a quick validation of the default position model (if present):
+```bash
+python compare_models.py
+```
+This will run two independent validation runs for the position (hover) and lift models when default checkpoints exist.
+
+
 ## Environment Details
 
 ### Env A: Position Environment (`GripperEnv`)
