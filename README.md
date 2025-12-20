@@ -1,5 +1,7 @@
 # MuJoCo Gripper Training
 
+**[Video Demo](https://drive.google.com/file/d/1FC3A-ANJhyKZf-6sx9TinKNSa2VMPyS7/view?usp=sharing)**
+
 This project implements a multi-stage curriculum learning approach for training a gripper to manipulate a block using MuJoCo and Stable-Baselines3. All training is done through unified scripts that support all four stages:
 - `train_ppo_improved.py` - Proximal Policy Optimization (PPO) training
 - `train_sac_improved.py` - Soft Actor-Critic (SAC) training
