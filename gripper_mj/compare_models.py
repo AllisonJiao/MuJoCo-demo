@@ -1,22 +1,22 @@
 """
 Model Comparison Script for Ablation Testing and Baseline Comparison.
 
-This script provides functions to compare two trained models by running 1000 episode
-validation and generating comparative histograms of the results.
+This script compares two trained models by running validation episodes and
+generating comparative histograms of the results.
 
-Supported environment types:
-- "hover" (position): GripperEnv from gripper_env_improved.py
-- "grasp": GripperGraspEnv from gripper_grasp_env_improved.py
-- "lift": GripperLiftEnv from gripper_env_lift_improved.py
-- "release": GripperReleaseEnv from gripper_env_release.py
+Canonical environment type names (use these on CLI):
+- "position" (alias: "hover"): GripperEnv from gripper_env_improved.py
+- "grasp": GripperGraspEnv
+- "lift": GripperLiftEnv
+- "release": GripperReleaseEnv
 
 Usage:
     python compare_models.py --model1 <path1> --model2 <path2> --env-type <type> --name1 <name1> --name2 <name2>
-    
-    Or run default comparison (hover vs lift):
+
+Or run default comparison (position stage validations):
     python compare_models.py
 
-Output images are saved to gripper_mj/comparison_results/ directory.
+Output images are saved to `gripper_mj/comparison_results/`.
 """
 
 import os
@@ -27,10 +27,10 @@ from stable_baselines3 import PPO, SAC
 from typing import Dict, List, Tuple, Optional
 
 # Import environments
-from gripper_env_improved import GripperEnv
-from gripper_grasp_env_improved import GripperGraspEnv
-from gripper_env_lift_improved import GripperLiftEnv
-from gripper_env_release import GripperReleaseEnv
+from mujoco_envs.gripper_env_improved import GripperEnv
+from mujoco_envs.gripper_env_grasp_improved import GripperGraspEnv
+from mujoco_envs.gripper_env_lift_improved import GripperLiftEnv
+from mujoco_envs.gripper_env_release import GripperReleaseEnv
 
 
 # Constants
@@ -43,12 +43,12 @@ def create_env(env_type: str):
     """Create environment based on type.
     
     Args:
-        env_type: One of "hover", "grasp", "lift", "release"
+        env_type: One of "position" (alias: "hover"), "grasp", "lift", "release"
         
     Returns:
         Gymnasium environment instance
     """
-    if env_type == "hover":
+    if env_type in ("position", "hover"):
         return GripperEnv(enable_updown_control=True)
     elif env_type == "grasp":
         return GripperGraspEnv(allow_xy_adjust=False)
@@ -365,8 +365,8 @@ def main():
     parser.add_argument("--model1", type=str, default=None, help="Path to first model (.zip)")
     parser.add_argument("--model2", type=str, default=None, help="Path to second model (.zip)")
     parser.add_argument("--env-type", type=str, default=None, 
-                        choices=["hover", "grasp", "lift", "release"],
-                        help="Environment type for validation")
+                        choices=["position", "hover", "grasp", "lift", "release"],
+                        help="Environment type for validation (use 'position' as canonical name; 'hover' is accepted as alias)")
     parser.add_argument("--name1", type=str, default=None, help="Name for first model (used in legend)")
     parser.add_argument("--name2", type=str, default=None, help="Name for second model (used in legend)")
     parser.add_argument("--output", type=str, default=None, help="Output path for histogram image")
@@ -374,9 +374,9 @@ def main():
                         help=f"Number of validation episodes (default: {VALIDATION_EPISODES})")
     args = parser.parse_args()
     
-    # Default paths for hover and lift models
+    # Default paths for position (hover) and lift models
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    default_hover_path = os.path.join(script_dir, "checkpoints", "ppo_model_final.zip")
+    default_position_path = os.path.join(script_dir, "checkpoints", "ppo_model_final.zip")
     default_lift_path = os.path.join(script_dir, "checkpoints_lift", "ppo_lift_model_final.zip")
     
     # Create output directory
@@ -405,29 +405,29 @@ def main():
         print("(Use --model1, --model2, --env-type to specify models for comparison)\n")
         
         # Check if default models exist
-        hover_exists = os.path.exists(default_hover_path)
+        position_exists = os.path.exists(default_position_path)
         lift_exists = os.path.exists(default_lift_path)
         
-        if not hover_exists:
-            print(f"Warning: Hover model not found at {default_hover_path}")
+        if not position_exists:
+            print(f"Warning: Position (hover) model not found at {default_position_path}")
         if not lift_exists:
             print(f"Warning: Lift model not found at {default_lift_path}")
         
-        # Run hover model validation (if model exists)
-        if hover_exists:
+        # Run position (hover) model validation (if model exists)
+        if position_exists:
             print("\n" + "="*60)
-            print("Validating Hover model on hover environment")
+            print("Validating Position (hover) model on position environment")
             print("="*60)
             # Run two independent validation runs to check consistency
             # In practice, users should provide two different model paths for meaningful comparison
-            output_hover = os.path.join(output_dir, "comparison_hover_validation.png")
+            output_position = os.path.join(output_dir, "comparison_position_validation.png")
             compare_models(
-                model1_path=default_hover_path,
-                model2_path=default_hover_path,
-                env_type="hover",
-                label1="Hover Model (Run 1)",
-                label2="Hover Model (Run 2)",
-                output_path=output_hover,
+                model1_path=default_position_path,
+                model2_path=default_position_path,
+                env_type="position",
+                label1="Position Model (Run 1)",
+                label2="Position Model (Run 2)",
+                output_path=output_position,
                 num_episodes=args.episodes
             )
         
@@ -448,10 +448,10 @@ def main():
                 num_episodes=args.episodes
             )
         
-        if not hover_exists and not lift_exists:
+        if not position_exists and not lift_exists:
             print("\nNo default models found. Please train models first or provide paths:")
             print("  python compare_models.py --model1 <path1> --model2 <path2> --env-type <type>")
-            print("\nSupported environment types: hover, grasp, lift, release")
+            print("\nSupported environment types: position (alias: hover), grasp, lift, release")
 
 
 if __name__ == "__main__":

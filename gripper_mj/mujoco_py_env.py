@@ -116,10 +116,18 @@ class BaseMujocoPyEnv(gym.Env[NDArray[np.float64], NDArray[np.float32]]):
     ) -> Tuple[NDArray[np.float64], np.float64, bool, bool, Dict[str, np.float64]]:
         raise NotImplementedError
 
-    def reset_model(self) -> NDArray[np.float64]:
+    def reset_model(self, initial_state=None) -> NDArray[np.float64]:
         """
         Reset the robot degrees of freedom (qpos and qvel).
         Implement this in each subclass.
+        
+        Args:
+            initial_state: Optional dict containing state to copy instead of random init.
+                - 'qpos': Joint positions to copy
+                - 'qvel': Joint velocities to copy
+                - 'ctrl': Control values to copy
+                - 'act': Actuator states to copy (critical for intvelocity actuators)
+                - 'target_pos': Target position to copy (optional)
         """
         raise NotImplementedError
 
@@ -160,9 +168,19 @@ class BaseMujocoPyEnv(gym.Env[NDArray[np.float64], NDArray[np.float32]]):
     ):
         super().reset(seed=seed)
 
-        self._reset_simulation()
+        # Check if initial_state is provided in options for state transfer.
+        # When transferring state from another environment (for chained execution),
+        # we skip _reset_simulation() because it would clear the qpos/qvel arrays
+        # that we're about to populate from the initial_state dict.
+        initial_state = None
+        if options is not None and 'initial_state' in options:
+            initial_state = options['initial_state']
+            # Skip _reset_simulation when transferring state - the state will be
+            # set directly from initial_state in reset_model()
+        else:
+            self._reset_simulation()
 
-        ob = self.reset_model()
+        ob = self.reset_model(initial_state=initial_state)
         info = self._get_reset_info()
 
         if self.render_mode == "human":

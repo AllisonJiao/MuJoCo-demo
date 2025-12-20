@@ -347,78 +347,104 @@ class GripperLiftEnv(MuJocoPyEnv, utils.EzPickle):
 
         return obs, reward, terminated, truncated, info
 
-    def reset_model(self):
-        """Reset the environment with gripper grasping the block."""
+    def reset_model(self, initial_state=None):
+        """Reset the environment with gripper grasping the block.
+        
+        Args:
+            initial_state: Optional dict containing:
+                - 'qpos': Joint positions to copy
+                - 'qvel': Joint velocities to copy
+                - 'ctrl': Control values to copy
+                - 'act': Actuator states to copy (critical for intvelocity actuators)
+                - 'target_pos': Target position to copy
+                If provided, copies state instead of random initialization.
+        """
         self.step_count = 0
         self.block_dropped = False
         self.initial_grasp_success = False
         
-        # Randomize block and target positions
-        rand_spawn(self.model, self.data)
-        
-        # Get block and target positions
-        block_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "block_free")
-        block_adr = self.model.jnt_qposadr[block_joint]
-        block_pos = self.data.qpos[block_adr:block_adr+3].copy()
-        target_pos = self._get_target_pos().copy()
-        
-        # Position gripper above block, holding it
-        # Set gripper to be at block position (holding it tight)
-        gripper_height = np.random.uniform(0.085, 0.1)  # Start with gripper raised above ground
-        
-        # Set gripper position joints to align with block
-        gripper_lr_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "gripper_leftright")
-        gripper_fb_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "gripper_forwardbackward")
-        gripper_ud_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "gripper_updown")
-        
-        lr_adr = self.model.jnt_qposadr[gripper_lr_joint]
-        fb_adr = self.model.jnt_qposadr[gripper_fb_joint]
-        ud_adr = self.model.jnt_qposadr[gripper_ud_joint]
-        
-        # Align gripper XY with block
-        self.data.qpos[lr_adr] = block_pos[0]
-        self.data.qpos[fb_adr] = block_pos[1]
-        # Position gripper slightly above block
-        self.data.qpos[ud_adr] = -(0.3 - gripper_height)  # Negative because joint range is -1 to 0
-        
-        # Close fingers to grasp block
-        left_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "left_slide")
-        right_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "right_slide")
-        
-        left_adr = self.model.jnt_qposadr[left_finger_joint]
-        right_adr = self.model.jnt_qposadr[right_finger_joint]
-        
-        # Set fingers to closed position (grasping the block)
-        # Joint range is -0.05 to 0.02, closed position should grip the block tightly
-        # Block dimension is 0.05m, finger width is 0.02m each side
-        # For proper grasp, fingers should be close but not fully compressed
-        finger_close_pos = 0.015  # Positive value to close fingers
-        self.data.qpos[left_adr] = finger_close_pos
-        self.data.qpos[right_adr] = finger_close_pos
-        
-        # Update block position to be at gripper height, aligned with gripper XY
-        self.data.qpos[block_adr:block_adr+3] = [block_pos[0], block_pos[1], gripper_height]
-        
-        # Set finger actuators to maintain closed position with strong force
-        self.data.ctrl[self.finger] = 0.8  # Strong positive to keep fingers closed
-        
-        # Zero out velocities
-        self.data.qvel[:] = 0.0
-        
-        # Propagate physics
-        mujoco.mj_forward(self.model, self.data)
-        
-        # Let physics settle for a few steps to ensure grasp
-        # Keep strong finger closure and hold gripper position
-        for _ in range(20):
-            self.data.ctrl[self.finger] = 0.8  # Keep fingers tight
-            self.data.ctrl[self.updown] = 0.0  # Hold vertical position
-            self.data.ctrl[self.leftright] = 0.0  # Hold horizontal position
-            self.data.ctrl[self.forwardback] = 0.0
-            mujoco.mj_step(self.model, self.data)
-        
-        # Check if grasp was successful
-        self.initial_grasp_success = self._check_grasped()
+        if initial_state is not None:
+            # Copy state from provided initial_state
+            self.data.qpos[:] = initial_state['qpos']
+            self.data.qvel[:] = initial_state['qvel']
+            self.data.ctrl[:] = initial_state['ctrl']
+            # Copy actuator states - critical for intvelocity actuators to prevent sudden movement
+            if 'act' in initial_state:
+                self.data.act[:] = initial_state['act']
+            if 'target_pos' in initial_state:
+                target_id = self.model.geom("target").id
+                self.model.geom_pos[target_id] = initial_state['target_pos']
+            mujoco.mj_forward(self.model, self.data)
+            
+            # Check if grasp was successful after state transfer
+            self.initial_grasp_success = self._check_grasped()
+        else:
+            # Randomize block and target positions
+            rand_spawn(self.model, self.data)
+            
+            # Get block and target positions
+            block_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "block_free")
+            block_adr = self.model.jnt_qposadr[block_joint]
+            block_pos = self.data.qpos[block_adr:block_adr+3].copy()
+            target_pos = self._get_target_pos().copy()
+            
+            # Position gripper above block, holding it
+            # Set gripper to be at block position (holding it tight)
+            gripper_height = np.random.uniform(0.085, 0.1)  # Start with gripper raised above ground
+            
+            # Set gripper position joints to align with block
+            gripper_lr_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "gripper_leftright")
+            gripper_fb_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "gripper_forwardbackward")
+            gripper_ud_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "gripper_updown")
+            
+            lr_adr = self.model.jnt_qposadr[gripper_lr_joint]
+            fb_adr = self.model.jnt_qposadr[gripper_fb_joint]
+            ud_adr = self.model.jnt_qposadr[gripper_ud_joint]
+            
+            # Align gripper XY with block
+            self.data.qpos[lr_adr] = block_pos[0]
+            self.data.qpos[fb_adr] = block_pos[1]
+            # Position gripper slightly above block
+            self.data.qpos[ud_adr] = -(0.3 - gripper_height)  # Negative because joint range is -1 to 0
+            
+            # Close fingers to grasp block
+            left_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "left_slide")
+            right_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "right_slide")
+            
+            left_adr = self.model.jnt_qposadr[left_finger_joint]
+            right_adr = self.model.jnt_qposadr[right_finger_joint]
+            
+            # Set fingers to closed position (grasping the block)
+            # Joint range is -0.05 to 0.02, closed position should grip the block tightly
+            # Block dimension is 0.05m, finger width is 0.02m each side
+            # For proper grasp, fingers should be close but not fully compressed
+            finger_close_pos = 0.015  # Positive value to close fingers
+            self.data.qpos[left_adr] = finger_close_pos
+            self.data.qpos[right_adr] = finger_close_pos
+            
+            # Update block position to be at gripper height, aligned with gripper XY
+            self.data.qpos[block_adr:block_adr+3] = [block_pos[0], block_pos[1], gripper_height]
+            
+            # Set finger actuators to maintain closed position with strong force
+            self.data.ctrl[self.finger] = 0.8  # Strong positive to keep fingers closed
+            
+            # Zero out velocities
+            self.data.qvel[:] = 0.0
+            
+            # Propagate physics
+            mujoco.mj_forward(self.model, self.data)
+            
+            # Let physics settle for a few steps to ensure grasp
+            # Keep strong finger closure and hold gripper position
+            for _ in range(20):
+                self.data.ctrl[self.finger] = 0.8  # Keep fingers tight
+                self.data.ctrl[self.updown] = 0.0  # Hold vertical position
+                self.data.ctrl[self.leftright] = 0.0  # Hold horizontal position
+                self.data.ctrl[self.forwardback] = 0.0
+                mujoco.mj_step(self.model, self.data)
+            
+            # Check if grasp was successful
+            self.initial_grasp_success = self._check_grasped()
         
         # Get updated positions after settling
         block_pos = self.data.xpos[self.body][:3]

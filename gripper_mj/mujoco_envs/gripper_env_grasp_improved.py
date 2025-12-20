@@ -529,8 +529,17 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
 
         return obs, reward, terminated, truncated, info
 
-    def reset_model(self):
+    def reset_model(self, initial_state=None):
         """Reset the environment with FIXED gripper position, block below with horizontal offset.
+        
+        Args:
+            initial_state: Optional dict containing:
+                - 'qpos': Joint positions to copy
+                - 'qvel': Joint velocities to copy
+                - 'ctrl': Control values to copy
+                - 'act': Actuator states to copy (critical for intvelocity actuators)
+                - 'target_pos': Target position to copy
+                If provided, copies state instead of random initialization.
         
         NEW APPROACH (following gripper_env_release.py):
         - Gripper stays at default position (no joint changes that cause velocity drift)
@@ -551,56 +560,69 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
         # Reset reached_ideal_height flag
         self.reached_ideal_height = False
 
-        # Reset simulation to initial state (this gives us default gripper position)
-        mujoco.mj_resetData(self.model, self.data)
-        
-        # Get joint addresses
-        block_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "block_free")
-        block_adr = self.model.jnt_qposadr[block_joint]
+        if initial_state is not None:
+            # Copy state from provided initial_state
+            self.data.qpos[:] = initial_state['qpos']
+            self.data.qvel[:] = initial_state['qvel']
+            self.data.ctrl[:] = initial_state['ctrl']
+            # Copy actuator states - critical for intvelocity actuators to prevent sudden movement
+            if 'act' in initial_state:
+                self.data.act[:] = initial_state['act']
+            if 'target_pos' in initial_state:
+                target_id = self.model.geom("target").id
+                self.model.geom_pos[target_id] = initial_state['target_pos']
+            mujoco.mj_forward(self.model, self.data)
+        else:
+            # Reset simulation to initial state (this gives us default gripper position)
+            mujoco.mj_resetData(self.model, self.data)
+            
+            # Get joint addresses
+            block_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "block_free")
+            block_adr = self.model.jnt_qposadr[block_joint]
 
-        left_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "left_slide")
-        left_adr = self.model.jnt_qposadr[left_finger_joint]
-        right_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "right_slide")
-        right_adr = self.model.jnt_qposadr[right_finger_joint]
-        
-        # Forward pass to get gripper position from default qpos
-        mujoco.mj_forward(self.model, self.data)
-        
-        # Get default gripper position
-        gripper_pos = self.data.xpos[self.gripper][:3].copy()
-        
-        # Randomize target position normally (on ground plane)
-        target_id = self.model.geom("target").id
-        self.model.geom_pos[target_id] = np.array([
-            np.random.uniform(-0.5, 0.5),   # x
-            np.random.uniform(-0.5, 0.5),   # y
-            0.001                           # z (on ground)
-        ])
-        
-        # Place block below gripper with random horizontal offset
-        block_offset_x = np.random.uniform(-BLOCK_OFFSET_RANGE, BLOCK_OFFSET_RANGE)
-        block_offset_y = np.random.uniform(-BLOCK_OFFSET_RANGE, BLOCK_OFFSET_RANGE)
-        
-        # Position block at ground level below gripper (with offset)
-        self.data.qpos[block_adr:block_adr+3] = [
-            gripper_pos[0] + block_offset_x,
-            gripper_pos[1] + block_offset_y,
-            BLOCK_DIMENSION  # z = block half-size (resting on ground)
-        ]
-        self.data.qpos[block_adr+3:block_adr+7] = [1, 0, 0, 0]  # Identity quaternion
+            left_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "left_slide")
+            left_adr = self.model.jnt_qposadr[left_finger_joint]
+            right_finger_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "right_slide")
+            right_adr = self.model.jnt_qposadr[right_finger_joint]
+            
+            # Forward pass to get gripper position from default qpos
+            mujoco.mj_forward(self.model, self.data)
+            
+            # Get default gripper position
+            gripper_pos = self.data.xpos[self.gripper][:3].copy()
+            
+            # Randomize target position normally (on ground plane)
+            target_id = self.model.geom("target").id
+            self.model.geom_pos[target_id] = np.array([
+                np.random.uniform(-0.5, 0.5),   # x
+                np.random.uniform(-0.5, 0.5),   # y
+                0.001                           # z (on ground)
+            ])
+            
+            # Place block below gripper with random horizontal offset
+            block_offset_x = np.random.uniform(-BLOCK_OFFSET_RANGE, BLOCK_OFFSET_RANGE)
+            block_offset_y = np.random.uniform(-BLOCK_OFFSET_RANGE, BLOCK_OFFSET_RANGE)
+            
+            # Position block at ground level below gripper (with offset)
+            self.data.qpos[block_adr:block_adr+3] = [
+                gripper_pos[0] + block_offset_x,
+                gripper_pos[1] + block_offset_y,
+                BLOCK_DIMENSION  # z = block half-size (resting on ground)
+            ]
+            self.data.qpos[block_adr+3:block_adr+7] = [1, 0, 0, 0]  # Identity quaternion
 
-        # Set fingers to open position
-        self.data.qpos[left_adr] = np.random.uniform(-0.06, -0.05)
-        self.data.qpos[right_adr] = self.data.qpos[left_adr]
+            # Set fingers to open position
+            self.data.qpos[left_adr] = np.random.uniform(-0.06, -0.05)
+            self.data.qpos[right_adr] = self.data.qpos[left_adr]
 
-        # Set controls to neutral to avoid initial velocity
-        self.data.ctrl[self.updown] = 0.0
-        self.data.ctrl[self.leftright] = 0.0
-        self.data.ctrl[self.forwardback] = 0.0
-        self.data.ctrl[self.finger] = 0.0
-        
-        # Propagate physics
-        mujoco.mj_forward(self.model, self.data)
+            # Set controls to neutral to avoid initial velocity
+            self.data.ctrl[self.updown] = 0.0
+            self.data.ctrl[self.leftright] = 0.0
+            self.data.ctrl[self.forwardback] = 0.0
+            self.data.ctrl[self.finger] = 0.0
+            
+            # Propagate physics
+            mujoco.mj_forward(self.model, self.data)
 
         # Get updated positions
         block_xyz = self.data.xpos[self.body][:3]

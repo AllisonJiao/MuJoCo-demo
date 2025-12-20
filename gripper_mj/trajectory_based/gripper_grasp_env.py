@@ -353,47 +353,73 @@ class GripperGraspEnv(MuJocoPyEnv, utils.EzPickle):
 
         return obs, reward, terminated, truncated, info
 
-    def reset_model(self):
-        """Reset: position gripper above block (like successful Env A outcome)."""
+    def reset_model(self, initial_state=None):
+        """Reset: position gripper above block (like successful Env A outcome).
+        
+        Args:
+            initial_state: Optional dict containing state to copy instead of random init.
+                - 'qpos': Joint positions to copy
+                - 'qvel': Joint velocities to copy
+                - 'ctrl': Control values to copy
+                - 'act': Actuator states to copy (critical for intvelocity actuators)
+                - 'target_pos': Target position to copy
+        """
         self.step_count = 0
         
-        # Randomize block position (but keep it on ground)
-        rand_spawn(self.model, self.data)
-        mujoco.mj_forward(self.model, self.data)
-        
-        # Get block position
-        block_xyz = self.data.xpos[self.body][:3]
-        block_xy = block_xyz[:2]
-        
-        # Position gripper directly above block at initial height
-        gripper_joint_lr = self.model.joint("gripper_leftright").id
-        gripper_joint_fb = self.model.joint("gripper_forwardbackward").id
-        gripper_joint_ud = self.model.joint("gripper_updown").id
-        
-        lr_adr = self.model.jnt_qposadr[gripper_joint_lr]
-        fb_adr = self.model.jnt_qposadr[gripper_joint_fb]
-        ud_adr = self.model.jnt_qposadr[gripper_joint_ud]
-        
-        # Set gripper XY to match block XY (aligned above)
-        self.data.qpos[lr_adr] = block_xy[0]  # x position
-        self.data.qpos[fb_adr] = block_xy[1]  # y position
-        
-        # Set gripper height to be above block
-        self.data.qpos[ud_adr] = -self.initial_height  # Negative because joint range is negative
-        
-        # Open fingers
-        finger_joint = self.model.joint("left_slide").id
-        finger_adr = self.model.jnt_qposadr[finger_joint]
-        self.data.qpos[finger_adr] = self.finger_open
-        
-        # Forward kinematics
-        mujoco.mj_forward(self.model, self.data)
+        if initial_state is not None:
+            # Copy state from provided initial_state
+            self.data.qpos[:] = initial_state['qpos']
+            self.data.qvel[:] = initial_state['qvel']
+            self.data.ctrl[:] = initial_state['ctrl']
+            # Copy actuator states - critical for intvelocity actuators to prevent sudden movement
+            if 'act' in initial_state:
+                self.data.act[:] = initial_state['act']
+            if 'target_pos' in initial_state:
+                target_id = self.model.geom("target").id
+                self.model.geom_pos[target_id] = initial_state['target_pos']
+            mujoco.mj_forward(self.model, self.data)
+        else:
+            # Randomize block position (but keep it on ground)
+            rand_spawn(self.model, self.data)
+            mujoco.mj_forward(self.model, self.data)
+            
+            # Get block position
+            block_xyz = self.data.xpos[self.body][:3]
+            block_xy = block_xyz[:2]
+            
+            # Position gripper directly above block at initial height
+            gripper_joint_lr = self.model.joint("gripper_leftright").id
+            gripper_joint_fb = self.model.joint("gripper_forwardbackward").id
+            gripper_joint_ud = self.model.joint("gripper_updown").id
+            
+            lr_adr = self.model.jnt_qposadr[gripper_joint_lr]
+            fb_adr = self.model.jnt_qposadr[gripper_joint_fb]
+            ud_adr = self.model.jnt_qposadr[gripper_joint_ud]
+            
+            # Set gripper XY to match block XY (aligned above)
+            self.data.qpos[lr_adr] = block_xy[0]  # x position
+            self.data.qpos[fb_adr] = block_xy[1]  # y position
+            
+            # Set gripper height to be above block
+            self.data.qpos[ud_adr] = -self.initial_height  # Negative because joint range is negative
+            
+            # Open fingers
+            finger_joint = self.model.joint("left_slide").id
+            finger_adr = self.model.jnt_qposadr[finger_joint]
+            self.data.qpos[finger_adr] = self.finger_open
+            
+            # Forward kinematics
+            mujoco.mj_forward(self.model, self.data)
         
         # Build observation (after forward kinematics)
+        block_xyz = self.data.xpos[self.body][:3]
+        block_xy = block_xyz[:2]
         gripper_xyz = self.data.xpos[self.gripper][:3]
         gripper_xy = gripper_xyz[:2]
         vertical_dist = gripper_xyz[2] - block_xyz[2]
         horizontal_dist = np.linalg.norm(block_xy - gripper_xy)
+        finger_joint = self.model.joint("left_slide").id
+        finger_adr = self.model.jnt_qposadr[finger_joint]
         finger_state = self.data.qpos[finger_adr]
         grasped = False
         

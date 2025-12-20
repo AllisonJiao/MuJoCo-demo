@@ -148,14 +148,37 @@ class GripperEnv(MuJocoPyEnv, utils.EzPickle):
 
         return obs, reward, terminated, truncated, info
 
-    def reset_model(self):
-        """Reset the robot degrees of freedom (qpos and qvel) and randomize block/target positions."""
+    def reset_model(self, initial_state=None):
+        """Reset the robot degrees of freedom (qpos and qvel) and randomize block/target positions.
+        
+        Args:
+            initial_state: Optional dict containing state to copy instead of random init.
+                - 'qpos': Joint positions to copy
+                - 'qvel': Joint velocities to copy
+                - 'ctrl': Control values to copy
+                - 'act': Actuator states to copy (critical for intvelocity actuators)
+                - 'target_pos': Target position to copy
+        """
         self.step_count = 0
         self.prev_distance = None  # Reset progress tracking
-        # Note: _reset_simulation() is already called by base class reset()
-        # So we just need to randomize positions and forward the physics
-        rand_spawn(self.model, self.data)  # randomize block/target
-        mujoco.mj_forward(self.model, self.data)  # propagate physics
+        
+        if initial_state is not None:
+            # Copy state from provided initial_state
+            self.data.qpos[:] = initial_state['qpos']
+            self.data.qvel[:] = initial_state['qvel']
+            self.data.ctrl[:] = initial_state['ctrl']
+            # Copy actuator states - critical for intvelocity actuators to prevent sudden movement
+            if 'act' in initial_state:
+                self.data.act[:] = initial_state['act']
+            if 'target_pos' in initial_state:
+                target_id = self.model.geom("target").id
+                self.model.geom_pos[target_id] = initial_state['target_pos']
+            mujoco.mj_forward(self.model, self.data)
+        else:
+            # Note: _reset_simulation() is already called by base class reset()
+            # So we just need to randomize positions and forward the physics
+            rand_spawn(self.model, self.data)  # randomize block/target
+            mujoco.mj_forward(self.model, self.data)  # propagate physics
 
         block_xy   = self.data.xpos[self.body][:2]
         gripper_xy = self.data.xpos[self.gripper][:2]
