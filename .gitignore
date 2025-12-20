@@ -1,5 +1,6 @@
 .DS_Store
 *.pyc
+**/__pycache__/
 
 # Checkpoints and model files
 gripper_mj/checkpoints/
